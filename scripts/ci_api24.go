@@ -85,9 +85,10 @@ func buildCIAPI24() error {
 		"-PryuiVersionCode=" + strconv.Itoa(app.cfg.Build),
 		"-PryuiVersionName=" + app.cfg.Version,
 		"-PryuiJniLibs=" + jni,
-		"-PryuiManifest=" + manifest,
-		"-PryuiRes=" + res,
-		"-PryuiNdkVersion=" + filepath.Base(ndk), app.cfg.gradleModules()}
+			"-PryuiManifest=" + manifest,
+			"-PryuiRes=" + res,
+			"-PryuiIcon=@drawable/ci_launcher",
+			"-PryuiNdkVersion=" + filepath.Base(ndk), app.cfg.gradleModules()}
 	if assets := filepath.Join(app.dir, "assets"); exists(assets) {
 		args = append(args, "-PryuiAssets="+assets)
 	}
