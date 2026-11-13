@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 // The upstream development command installs and launches on a device.
@@ -45,12 +46,28 @@ func buildCIAPI24() error {
 	if err != nil {
 		return err
 	}
-	manifest := filepath.Join(work, "AndroidManifest.xml")
-	if err := os.WriteFile(manifest, []byte(app.cfg.androidManifest(true)), 0o644); err != nil {
+	res := filepath.Join(work, "res")
+	os.RemoveAll(res)
+	iconDir := filepath.Join(res, "drawable")
+	if err := os.MkdirAll(iconDir, 0o755); err != nil {
 		return err
 	}
-	res := filepath.Join(work, "res")
+	iconXML := `<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp" android:height="48dp" android:viewportWidth="48" android:viewportHeight="48">
+    <path android:fillColor="#6750A4" android:pathData="M0,0h48v48h-48z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M13,12h22v4h-22zM13,22h22v4h-22zM13,32h16v4h-16z" />
+</vector>
+`
+	if err := os.WriteFile(filepath.Join(iconDir, "ci_launcher.xml"), []byte(iconXML), 0o644); err != nil {
+		return err
+	}
 	if _, err := androidRes(app.cfg, res); err != nil {
+		return err
+	}
+	manifest := filepath.Join(work, "AndroidManifest.xml")
+	manifestContent := strings.ReplaceAll(app.cfg.androidManifest(true), "${ryuiIcon}", "@drawable/ci_launcher")
+	if err := os.WriteFile(manifest, []byte(manifestContent), 0o644); err != nil {
 		return err
 	}
 	unlock, err := lockShared(androidHostDir(work))
