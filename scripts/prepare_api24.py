@@ -24,9 +24,8 @@ def patch_tree(root: Path, output: Path) -> None:
     if len(gradles) != 10:
         raise RuntimeError(f"Expected 10 Android module Gradle files, found {len(gradles)}")
     for path in gradles:
-        replace(path.relative_to(root).as_posix(), "minSdk = 33", "minSdk = 24")
-    replace("cmd/ryui/android.go", 'const androidMinAPI = "33"', 'const androidMinAPI = "24"')
-
+        relative = path.relative_to(root).as_posix()
+        replace(relative, "minSdk = 33", "minSdk = 24")
     replace(
         "platform/android/app/build.gradle.kts",
         '        getByName("debug") {\n',
@@ -34,6 +33,8 @@ def patch_tree(root: Path, output: Path) -> None:
         '            prop("ryuiJniLibs")?.let { jniLibs.srcDir(it) }\n'
         '            prop("ryuiAssets")?.let { assets.srcDir(it) }\n',
     )
+    replace("cmd/ryui/android.go", 'const androidMinAPI = "33"', 'const androidMinAPI = "24"')
+
     kotlin = "platform/android/ryui/src/main/java/dev/ryui/"
     replace(
         kotlin + "Locale.kt",
@@ -58,14 +59,18 @@ def patch_tree(root: Path, output: Path) -> None:
         replace(
             kotlin + name,
             "!android.animation.ValueAnimator.areAnimatorsEnabled()",
-            "(if (android.os.Build.VERSION.SDK_INT >= 26) {\n"
-            "                !android.animation.ValueAnimator.areAnimatorsEnabled()\n"
-            "            } else {\n"
-            "                android.provider.Settings.Global.getFloat(\n"
-            "                    runtime.app.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f\n"
-            "            })" if name == "RyUIActivity.kt" else
-            "(android.provider.Settings.Global.getFloat(\n"
-            "            app.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f)",
+            "        reduceMotion = if (android.os.Build.VERSION.SDK_INT >= 26) {\n"
+            "            !android.animation.ValueAnimator.areAnimatorsEnabled()\n"
+            "        } else {\n"
+            "            android.provider.Settings.Global.getFloat(\n"
+            "                runtime.app.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f\n"
+            "        }," if name == "RyUIActivity.kt" else
+            "        reduceMotion = if (android.os.Build.VERSION.SDK_INT >= 26) {\n"
+            "            !android.animation.ValueAnimator.areAnimatorsEnabled()\n"
+            "        } else {\n"
+            "            android.provider.Settings.Global.getFloat(\n"
+            "                app.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f\n"
+            "        },",
         )
     replace(
         kotlin + "Automation.kt",
