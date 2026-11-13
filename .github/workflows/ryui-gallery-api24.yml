@@ -1,0 +1,152 @@
+name: RyUI Gallery API 24 build experiment
+
+on:
+  workflow_dispatch:
+    inputs:
+      ryui_ref:
+        description: RyUI commit or ref (patches checked against the default commit)
+        required: true
+        default: '5cb5e808f220e8c903f2c7cb64ad6d52281c9349'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ryui-api24-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  gallery:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      NDK_VERSION: '28.2.13676358'
+      BUILD_TOOLS: '36.0.0'
+      GOTOOLCHAIN: local
+      GOFLAGS: '-buildvcs=false'
+    steps:
+      - name: Check out CI scripts
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Check out fixed RyUI source
+        id: ryui_source
+        uses: actions/checkout@v5
+        with:
+          repository: egoist/RyUI
+          ref: ${{ inputs.ryui_ref }}
+          path: upstream
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.10'
+          cache: false
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up SDK manager
+        uses: android-actions/setup-android@v3
+
+      - name: Set up isolated build directories
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts "$RUNNER_TEMP/ryui-sdk" "$RUNNER_TEMP/ryui-gopath"
+          manager=$(command -v sdkmanager)
+          printf 'SDK_MANAGER=%s\n' "$manager" >> "$GITHUB_ENV"
+          printf 'ANDROID_HOME=%s\nANDROID_SDK_ROOT=%s\n' "$RUNNER_TEMP/ryui-sdk" "$RUNNER_TEMP/ryui-sdk" >> "$GITHUB_ENV"
+          printf 'ANDROID_NDK_HOME=%s\n' "$RUNNER_TEMP/ryui-sdk/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          printf 'GOPATH=%s\n' "$RUNNER_TEMP/ryui-gopath" >> "$GITHUB_ENV"
+          printf 'XDG_CACHE_HOME=%s\n' "$RUNNER_TEMP/ryui-cache" >> "$GITHUB_ENV"
+          printf 'RYUI_CI_OUTPUT=%s\n' "$GITHUB_WORKSPACE/artifacts" >> "$GITHUB_ENV"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import re
+          source = Path('upstream/go.mod').read_text()
+          if not re.search(r'^module github.com/egoist/ryui$', source, re.M):
+              raise SystemExit('Unexpected Go module; refusing to patch another project')
+          Path('artifacts/source-request.txt').write_text(os.environ['RYUI_REQUESTED_REF'] + '\n')
+          Path('artifacts/source-commit.txt').write_text(os.environ['RYUI_SOURCE_COMMIT'] + '\n')
+          PY
+        env:
+          RYUI_REQUESTED_REF: ${{ inputs.ryui_ref }}
+          RYUI_SOURCE_COMMIT: ${{ steps.ryui_source.outputs.commit }}
+
+      - name: Install pinned Android SDK and NDK
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, subprocess
+          command = [os.environ['SDK_MANAGER'], '--sdk_root=' + os.environ['ANDROID_HOME']]
+          subprocess.run(command + ['--licenses'], input='y\n' * 100, text=True, check=True)
+          subprocess.run(command + ['platform-tools', 'platforms;android-36',
+              'build-tools;' + os.environ['BUILD_TOOLS'], 'ndk;' + os.environ['NDK_VERSION']], check=True)
+          PY
+          {
+            go version
+            java -version 2>&1
+            cat "$ANDROID_NDK_HOME/source.properties"
+          } > artifacts/toolchain.txt
+
+      - name: Prepare API 24 source and embedded APK entry point
+        run: |
+          set -euo pipefail
+          python3 scripts/prepare_api24.py upstream artifacts
+          gofmt -w upstream/cmd/ryui/ci_api24.go
+          cp upstream/cmd/ryui/ci_api24.go artifacts/ci_api24.go
+
+      - name: Build complete Gallery APK without a device
+        working-directory: upstream
+        env:
+          RYUI_CI_API24: '1'
+        run: |
+          set -euo pipefail
+          go run ./cmd/ryui 2>&1 | tee "$RYUI_CI_OUTPUT/build.log"
+
+      - name: Verify packaged APK
+        run: |
+          set -euo pipefail
+          "$ANDROID_HOME/build-tools/$BUILD_TOOLS/aapt" dump badging artifacts/ryui-gallery-api24-debug.apk > artifacts/apk-badging.txt
+          "$ANDROID_HOME/build-tools/$BUILD_TOOLS/apksigner" verify --verbose artifacts/ryui-gallery-api24-debug.apk > artifacts/signature.txt
+          python3 scripts/verify_apk.py artifacts
+          (cd artifacts && sha256sum ryui-gallery-api24-debug.apk > SHA256SUMS)
+
+      - name: Collect diagnostics and summary
+        if: always()
+        run: |
+          python3 scripts/collect_diagnostics.py artifacts
+          {
+            printf '## RyUI Gallery API 24 experiment\n\n'
+            printf 'Source request: `%s`\n\n' "$SOURCE_REQUEST"
+            printf 'Native compiler target and Android minSdk: **24**. compileSdk/targetSdk: **36**.\n\n'
+            printf 'This workflow builds an embedded debug APK. No emulator or device is started.\n\n'
+            printf '**Packaging success does not establish API 24 runtime compatibility.** RuntimeShader and other NewApi findings remain in the complete gallery. See patch-report.json, lint-status.txt and Lint reports.\n\n'
+            if [ -f artifacts/apk-verification.json ]; then
+              printf 'APK packaging checks completed; see apk-verification.json and SHA256SUMS.\n'
+            else
+              printf 'APK packaging checks did not complete. See the failed step and build.log.\n'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          SOURCE_REQUEST: ${{ inputs.ryui_ref }}
+
+      - name: Upload APK and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ryui-gallery-api24-${{ github.run_number }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 14
