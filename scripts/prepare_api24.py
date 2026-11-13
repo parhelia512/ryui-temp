@@ -58,19 +58,19 @@ def patch_tree(root: Path, output: Path) -> None:
     for name in ("RyUIActivity.kt", "Navigation.kt"):
         replace(
             kotlin + name,
-            "!android.animation.ValueAnimator.areAnimatorsEnabled()",
-            "        reduceMotion = if (android.os.Build.VERSION.SDK_INT >= 26) {\n"
+            "reduceMotion = !android.animation.ValueAnimator.areAnimatorsEnabled()",
+            "reduceMotion = if (android.os.Build.VERSION.SDK_INT >= 26) {\n"
             "            !android.animation.ValueAnimator.areAnimatorsEnabled()\n"
             "        } else {\n"
             "            android.provider.Settings.Global.getFloat(\n"
             "                runtime.app.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f\n"
-            "        }," if name == "RyUIActivity.kt" else
-            "        reduceMotion = if (android.os.Build.VERSION.SDK_INT >= 26) {\n"
+            "        }" if name == "RyUIActivity.kt" else
+            "reduceMotion = if (android.os.Build.VERSION.SDK_INT >= 26) {\n"
             "            !android.animation.ValueAnimator.areAnimatorsEnabled()\n"
             "        } else {\n"
             "            android.provider.Settings.Global.getFloat(\n"
             "                app.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f\n"
-            "        },",
+            "        }",
         )
     replace(
         kotlin + "Automation.kt",
