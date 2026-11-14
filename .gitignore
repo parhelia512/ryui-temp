@@ -1,0 +1,10 @@
+third_party/
+android/.gradle/
+android/local.properties
+android/build/
+android/app/build/
+android/app/src/main/jniLibs/
+dist/
+artifacts/
+__pycache__/
+*.pyc

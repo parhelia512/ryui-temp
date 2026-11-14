@@ -1,0 +1,261 @@
+{
+  "schema_version": 1,
+  "review_type": "read_only_functionality_review",
+  "review_date": "2026-11-14",
+  "status_vocabulary": ["实现", "部分", "缺失", "待验证"],
+  "scope": {
+    "old_root": "D:/sing-box-app/LxBox-2.25.21/app",
+    "new_root": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app",
+    "research_report": "D:/sing-box-app/LxBox-2.25.21/docs/research/lxbox-sing-box-lx-interactions.zh-CN.md",
+    "read_only": true,
+    "build_or_runtime_commands_run": [],
+    "forbidden_operations_respected": ["Go", "Gradle", "NDK", "GitHub Actions", "git"],
+    "parallel_tree_caveat": "工作区仍可能有并行写入；本报告把当前读到的缺口标为待验证或当前阻碍，不把暂时未出现的文件一律断言为最终缺失。对已经存在且显式返回 unsupported/需要宿主的代码，按真实当前覆盖计入缺口。"
+  },
+  "summary": {
+    "status": "部分",
+    "counts": {
+      "实现": 4,
+      "部分": 10,
+      "缺失": 7,
+      "待验证": 5
+    },
+    "conclusion": "当前 app 已有可读的 Go parser/builder、runtime/storage、部分 libbox CommandClient 封装、WARP 客户端和 RyUI 页面骨架，但不是 LxBox 全功能迁移。Android host 的 manifest 组件与实现不成闭环，核心 push streams 没有接到新 UI，Taildrop 发送/保存和 OpenConnect browser callback 仍显式失败，legacy backup/VPN settings/migration 仍需宿主或外部 metadata。不能以当前 PoC/骨架宣称完整迁移。",
+    "do_not_claim_full_migration": true
+  },
+  "inventory": {
+    "legacy_method_contract": {
+      "status": "部分",
+      "old_source": "D:/sing-box-app/LxBox-2.25.21/app/android/app/src/main/kotlin/com/leadaxe/lxbox/vpn/VpnPlugin.kt",
+      "old_dispatch_rows": 127,
+      "old_unique_method_names": 126,
+      "new_exact_name_cases_confirmed": 31,
+      "new_exact_name_cases": [
+        "ccSetTailscaleExitNode", "ccGetTailscaleStatus", "ccTailscaleLogout", "ccTailscaleLogin", "ccStartTailscalePing", "ccStopTailscalePing",
+        "ccStartConnectionTest", "ccStopConnectionTest", "ccGetOpenConnectStatus", "ccTaildropDelete", "ccTaildropCancelReceiving", "ccTaildropMarkRead",
+        "ccTaildropInboxSnapshot", "ccSubmitOpenConnectForm", "ccCancelOpenConnectChallenge", "ccStartOpenConnectCallback", "ccStopOpenConnectCallback",
+        "ccUrlTestOutbound", "ccGetUrlViaOutbound", "ccUrlTestGroup", "ccGetRules", "ccGetGroups", "ccGetOutbounds", "ccGetDnsGroups",
+        "ccGetRunningConfig", "ccGetPool", "ccSelectOutbound", "ccSetEndpointEnabled", "ccGetWireGuardStatus", "ccCloseConnection", "ccCloseConnections"
+      ],
+      "replacement_only_methods": {
+        "config_and_vpn": ["saveConfig -> config.save", "getConfig -> config.get", "startVPN/reloadVPN/stopVPN -> vpn.start/vpn.reload/vpn.stop"],
+        "command_client": ["most CC calls are nested under core.call; this is not proof of legacy MethodChannel compatibility"],
+        "not_equivalent_or_unmapped": ["formatConfig", "pprofProfile", "getMemoryInfo", "getInstalledApps", "getAppIcon", "getAppInfo", "automationAction", "ccPauseClients", "ccResumeClients", "ccConnectScreen", "ccConnectProfiler", "taildropServiceFiles", "taildropClipState", "legacy native preference setters/getters"]
+      },
+      "evidence": [
+        {"path": "D:/sing-box-app/LxBox-2.25.21/app/android/app/src/main/kotlin/com/leadaxe/lxbox/vpn/VpnPlugin.kt", "line": 355, "detail": "Legacy when(call.method) dispatch contains 127 branch rows (one duplicate ccTaildropDelete row); 126 unique names."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/runtime/runtime.go", "line": 81, "detail": "New public application boundary uses settings.get/config.get/config.save/vpn.* and core.call instead of the legacy 126-method channel."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/core/controller.go", "line": 205, "detail": "Only a subset of CC names is dispatched by the new Controller; exact-name presence does not establish equivalent lifecycle, callback, or error semantics."}
+      ],
+      "blockers": ["No generated compatibility matrix or adapter for all 126 legacy methods was found.", "Some legacy methods are Android-only and require missing host components, not just Go dispatch aliases."]
+    },
+    "legacy_streams": {
+      "status": "部分",
+      "old_stream_count": 12,
+      "old_streams": ["status_events", "coreLog", "cc/status", "cc/outbounds", "cc/groups", "cc/connections", "cc/dns", "cc/tailscale", "cc/tailscale_ping", "cc/connection_test", "cc/openconnect", "cc/taildrop_inbox"],
+      "new_stream_path": "Go eventLog -> events.poll; selected async core handlers -> platform events.emit -> Android broadcast",
+      "coverage": [
+        {"stream": "status_events", "status": "部分", "detail": "runtime has events.poll and service status events, but no direct equivalent to the legacy Android status EventChannel."},
+        {"stream": "coreLog", "status": "部分", "detail": "Controller.WriteDebugMessage emits through platform events, but new UI only polls runtime eventLog; no native-to-UI log sink is wired."},
+        {"stream": "cc/status", "status": "缺失", "detail": "new noopCommandHandler.WriteStatus is empty; no status subscription or UI fan-out."},
+        {"stream": "cc/outbounds", "status": "缺失", "detail": "new noopCommandHandler.WriteOutbounds is empty; UI performs unary get only."},
+        {"stream": "cc/groups", "status": "缺失", "detail": "new noopCommandHandler.WriteGroups is empty; no push/refcount stream."},
+        {"stream": "cc/connections", "status": "缺失", "detail": "new noopCommandHandler.WriteConnectionEvents is empty and connectionsSnapshot explicitly returns an error."},
+        {"stream": "cc/dns", "status": "缺失", "detail": "new noopCommandHandler.WriteDNSQuery is empty."},
+        {"stream": "cc/tailscale", "status": "部分", "detail": "unary status and ping session exist; no equivalent persistent native/Dart stream to the UI."},
+        {"stream": "cc/tailscale_ping", "status": "部分", "detail": "session emits platform events with client_id, but no new UI subscription consumes those broadcasts."},
+        {"stream": "cc/connection_test", "status": "部分", "detail": "stage/result handlers exist, but only platform event emission is present."},
+        {"stream": "cc/openconnect", "status": "部分", "detail": "status subscription handler exists, but event delivery is not attached to the new UI eventLog."},
+        {"stream": "cc/taildrop_inbox", "status": "部分", "detail": "inbox subscription handler exists, but its events are platform broadcasts rather than a new UI stream."}
+      ],
+      "evidence": [
+        {"path": "D:/sing-box-app/LxBox-2.25.21/app/lib/services/platform_channels.dart", "line": 26, "detail": "Legacy status/core/CC EventChannel contract lists 12 channels."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/core/handler.go", "line": 4, "detail": "noopCommandHandler implements WriteStatus/WriteGroups/WriteOutbounds/WriteConnectionEvents/WriteDNSQuery as no-ops."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/core/async.go", "line": 69, "detail": "Async results call c.emitClient -> platform events.emit, not runtime.eventLog or a UI subscription."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/ui/app.go", "line": 194, "detail": "New UI polls only events.poll every 1.5 seconds."}
+      ],
+      "blockers": ["No replacement for legacy stream backpressure, delta accumulation, screen/profiler refcounts, pause/resume, or cold-start resync was found."]
+    },
+    "legacy_screen_workflows": {
+      "status": "部分",
+      "old_screen_tree_files": 193,
+      "new_screen_handler_functions": 39,
+      "new_navigation_destinations": 18,
+      "coverage_observation": "New UI has high-level Home/Servers/Config/Routing/DNS/Diagnostics/Tailscale/Taildrop/OpenConnect/WARP/Settings/Automation/Workspace/Backup/Advanced pages plus JSON editors. This is not equivalent to 193 old workflow files.",
+      "known_workflow_gaps": [
+        "No reachable Add server wizard: serverWizard exists in import.go but no navigation call was found; Servers uses sourceEditor only.",
+        "No old-style node settings, chain editing flow, auto-group editing flow, DNS server catalog/editor, per-app trace, crash/OOM report workflows, or detailed backup category/restore preview flows found.",
+        "No live stats/profiler UI equivalent: Statistics shows status/outbounds actions and event text rather than old structured profiler/connection/DNS views."
+      ],
+      "evidence": [
+        {"path": "D:/sing-box-app/LxBox-2.25.21/app/lib/screens", "line": null, "detail": "Static inventory found 193 Dart files under screens/."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/ui/app.go", "line": 75, "detail": "New navigation has 18 high-level destinations."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/ui/import.go", "line": 50, "detail": "serverWizard is implemented, but no call from the navigation/source page was found in the current tree."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/ui/observability.go", "line": 49, "detail": "Statistics is an event panel plus unary status/outbounds controls, not the legacy profiler workflow."}
+      ],
+      "blockers": ["No screen/workflow mapping or golden workflow acceptance list was found; generic JSON editing cannot be counted as parity for structured screens."]
+    }
+  },
+  "feature_domains": [
+    {
+      "id": "builder_parser_contract",
+      "status": "部分",
+      "scope": "Builder/Parser/contract registry, strict validation and rejection behavior",
+      "evidence": [
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/parser/parser.go", "line": 121, "detail": "Parser supports JSON/YAML/URI lines/base64/WireGuard INI and loads protocol registry assets."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/builder/build.go", "line": 26, "detail": "Builder expands wizard template, emits sources/directions/rules/DNS/route and can optionally call core option validation."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/runtime/config.go", "line": 50, "detail": "Runtime calls builder.Build without setting ValidateCore; saveConfig later calls libbox.CheckConfig."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/builder/sources.go", "line": 45, "detail": "Builder explicitly fatals on unsupported member metadata/flags and unsupported auto strategy fields instead of preserving all legacy semantics."}
+      ],
+      "blockers": ["Only a small parser fixture set was found (ss, Clash YAML, WireGuard); no complete old golden corpus was found in the new app.", "No formatConfig equivalent was found; only CheckConfig/validate is wired.", "No CoreRejectGuard-style node disable/rebuild/retry flow is present in new runtime dispatch."]
+    },
+    {
+      "id": "legacy_storage_workspace_backup",
+      "status": "部分",
+      "scope": "lxbox_settings.json, workspaces, caches, legacy migration, backup and native VPN settings",
+      "evidence": [
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/mobile/bridge.go", "line": 29, "detail": "Bootstrap maps applicationInfo.dataDir/app_flutter to the legacy documents directory."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/storage/workspace.go", "line": 193, "detail": "Workspace save/load/delete/rename, pending journal and sub_cache/rule_sets copy are implemented."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/storage/storage.go", "line": 303, "detail": "Backup envelope export/import exists."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/storage/storage.go", "line": 375, "detail": "Backup import explicitly warns category-level Dart merge and typed VPN preference application are not implemented in this Go layer."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/storage/migration.go", "line": 9, "detail": "Legacy migration requires external NodeLinks/PresetIDsByDNSTag/SubscriptionBodies; missing semantic facts force read-only."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/storage/storage.go", "line": 424, "detail": "Startup load calls MigrateDocumentWithOptions with empty options, so unresolved legacy links/preset mappings remain read-only."}
+      ],
+      "blockers": ["Runtime never supplies MigrationOptions from parser/cache/template metadata.", "vpn_settings are returned in BackupReport but not applied by Host/native preference bridge.", "The full old Dart backup category merge/preview/restore contract is not reproduced."]
+    },
+    {
+      "id": "core_lifecycle_and_android_platform",
+      "status": "部分",
+      "scope": "TUN, protect, routes, interfaces, Wi-Fi, notifications, service start/reload/stop",
+      "evidence": [
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/android/app/src/main/kotlin/com/leadaxe/lxbox/android/Host.kt", "line": 118, "detail": "Host implements vpn.openTun, protect, interfaces, connection owner, Wi-Fi, network monitor, DNS cache deletion and notification callbacks."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/android/app/src/main/kotlin/com/leadaxe/lxbox/android/Host.kt", "line": 163, "detail": "Host dispatches vpn.start/reload/stop by starting BoxVpnService."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/android/app/src/main/kotlin/com/leadaxe/lxbox/android/Host.kt", "line": 303, "detail": "Network monitor poll reads activeNetwork but does not show the research-report VPN exclusion/debounce implementation."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/android/app/src/main/AndroidManifest.xml", "line": 21, "detail": "Manifest references LxBoxApplication, MainActivity, BoxVpnService, LxBoxTileService, BootReceiver, ExternalCommandReceiver and LxBoxAppFunctionService."}
+      ],
+      "blockers": ["Current active Android source contains only Host.kt; no definitions for the manifest-referenced Application/Activity/VpnService/Tile/Boot/ExternalCommand/AppFunction classes were found.", "Host references BoxVpnService.ACTION_RELOAD/live/replaceTun and MainActivity.current/requestSaf/requestPermission; these are unresolved in the current source tree.", "This is a current-tree compile/runtime blocker, but parallel writes may still add the missing host files; recheck before final release judgment."]
+    },
+    {
+      "id": "tailscale",
+      "status": "部分",
+      "scope": "Tailscale endpoint status/login/logout/exit node/ping and state persistence",
+      "evidence": [
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/core/controller.go", "line": 255, "detail": "Unary Tailscale status/login/logout/exit-node methods and ping session dispatch exist."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/core/async.go", "line": 31, "detail": "Tailscale ping session handler emits client-scoped platform events."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/ui/networks.go", "line": 10, "detail": "UI exposes endpoint tag, status, login/logout, exit node and ping controls."}
+      ],
+      "blockers": ["No equivalent persistent Tailscale state-directory identity store was found in new app runtime; builder/state directory behavior remains to be verified against old state-store contract.", "No UI consumer for async ping/status event broadcasts was found."]
+    },
+    {
+      "id": "taildrop",
+      "status": "部分",
+      "scope": "Taildrop inbox, download/save, delete, cancel, mark-read, send bytes/file, service files",
+      "evidence": [
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/core/controller.go", "line": 263, "detail": "Inbox snapshot subscription, delete, cancel receiving and mark read are dispatched."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/core/controller.go", "line": 267, "detail": "ccTaildropSendBytes explicitly returns an error requiring streaming chunks."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/core/controller.go", "line": 268, "detail": "ccTaildropPickAndSend explicitly returns an error requiring Android host picker and URI handoff."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/ui/networks.go", "line": 63, "detail": "UI exposes Save, but calls ccTaildropSave, which has no Controller dispatch case in the current source."}
+      ],
+      "blockers": ["No Taildrop chunk writer/session, native temporary download, SAF save/delete-after-save, offline inbox migration, automatic notification or service_files behavior was found.", "New Taildrop UI buttons currently reach explicit errors or unknown core methods."]
+    },
+    {
+      "id": "openconnect",
+      "status": "部分",
+      "scope": "OpenConnect status/challenges/forms/browser callback",
+      "evidence": [
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/core/async.go", "line": 56, "detail": "OpenConnect status subscription and form submission handler exist."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/core/controller.go", "line": 273, "detail": "Browser callback start/stop delegate to openconnect.callback.start/stop on the platform."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/android/app/src/main/kotlin/com/leadaxe/lxbox/android/Host.kt", "line": 104, "detail": "Host dispatch has no openconnect.callback.start/stop cases; unknown platform method is thrown."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/ui/networks.go", "line": 114, "detail": "UI offers browser callback controls, but they cannot complete through the current Host dispatch."}
+      ],
+      "blockers": ["OpenConnectCallbackServer equivalent is absent in current app Host/runtime.", "Challenge field options and browser callback result delivery are not fully represented by the new async handler/UI model."]
+    },
+    {
+      "id": "warp",
+      "status": "部分",
+      "scope": "WARP registration, MASQUE, endpoint lists/scans, URI/config generation and redaction",
+      "evidence": [
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/warp/client.go", "line": 26, "detail": "Runtime WARP client dispatch includes register, MASQUE, account URI/config, random endpoints, scan and redaction methods."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/runtime/extensions.go", "line": 18, "detail": "Runtime loads warp_endpoints.json and persists registered account values."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/ui/networks.go", "line": 132, "detail": "New UI exposes only a basic WARP register/import/share flow; MASQUE/scan/endpoint/config workflows are not exposed."}
+      ],
+      "blockers": ["UI coverage is substantially narrower than old WARP experiment/wizard flows.", "Network registration and scan require runtime/network verification; no runtime test was run by this read-only review."]
+    },
+    {
+      "id": "qr_saf",
+      "status": "部分",
+      "scope": "QR scanning and Android SAF import/export",
+      "evidence": [
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/ui/import.go", "line": 15, "detail": "RyUI camera/scan QR helper and SAF-backed open/save helpers exist."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/android/app/src/main/kotlin/com/leadaxe/lxbox/android/Host.kt", "line": 342, "detail": "Host implements ACTION_OPEN_DOCUMENT and ACTION_CREATE_DOCUMENT callbacks."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/ui/import.go", "line": 50, "detail": "serverWizard containing QR entry is not connected to the current Servers navigation in the inspected source."}
+      ],
+      "blockers": ["SAF calls require missing MainActivity.current/requestSaf implementation in current active host source.", "QR helper exists as code but cannot be counted as a complete user workflow while the wizard is unreachable."]
+    },
+    {
+      "id": "tasker_appfunctions_automation",
+      "status": "缺失",
+      "scope": "Tasker/Locale/raw automation intents, AppFunctions, external receivers and no-UI controls",
+      "evidence": [
+        {"path": "D:/sing-box-app/LxBox-2.25.21/app/android/app/src/main/kotlin/com/leadaxe/lxbox/vpn/VpnPlugin.kt", "line": 816, "detail": "Legacy automation/AppFunctions setters, broadcast and active-state cases exist."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/android/app/src/main/AndroidManifest.xml", "line": 67, "detail": "Manifest references BootReceiver and ExternalCommandReceiver, but current active source has no corresponding class definitions."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/android/app/src/main/AndroidManifest.xml", "line": 85, "detail": "Manifest references LxBoxAppFunctionService, also absent from the current active source."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/automation/engine.go", "line": 1, "detail": "Go automation engine supports internal actions/events, not the Android Tasker/Locale/AppFunctions ingress contract."}
+      ],
+      "blockers": ["No native receiver, Tasker/Locale plugin, AppFunction implementation, boot/watchdog, or engine-independent raw intent action bridge was found."]
+    },
+    {
+      "id": "rules_and_auto_update",
+      "status": "部分",
+      "scope": "SRS/ruleset download/read, local cache, subscription auto-update and rebuild reaction",
+      "evidence": [
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/runtime/subscriptions.go", "line": 24, "detail": "In-process updater refreshes due sources and reacts to VPN state."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/runtime/services.go", "line": 41, "detail": "rulesets.download/read/metadata dispatch exists."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/builder/rules.go", "line": 32, "detail": "Builder can replace remote rule_set with cached local payload and emits fatal diagnostics when absent/invalid."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/ui/import.go", "line": 128, "detail": "Rule sets UI exposes only ID/URL download/read/metadata controls."}
+      ],
+      "blockers": ["No full old routing catalog/custom-rule editor/preset migration workflow was found.", "No evidence that a successful rule-set refresh automatically rebuilds and reloads the running config with old Dart update-action semantics for every source type."]
+    },
+    {
+      "id": "debug_diagnostics_and_pprof",
+      "status": "部分",
+      "scope": "Debug API, URL/DNS/TCP/MTU diagnostics, pprof, logs, memory/connection profiler",
+      "evidence": [
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/runtime/debug.go", "line": 15, "detail": "Debug server start/stop/status and token persistence are implemented."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/runtime/network.go", "line": 16, "detail": "Application DNS/TCP/HTTP diagnostics run through standard application network calls."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/core/async.go", "line": 71, "detail": "Status snapshots explicitly error because CommandStatus stream is not implemented; logs snapshot returns empty; connections snapshot explicitly errors."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/internal/runtime/runtime.go", "line": 127, "detail": "No pprof dispatch equivalent is present in the application runtime switch."}
+      ],
+      "blockers": ["Legacy pprofProfile/getMemoryInfo/structured TrafficProfiler and persistent core log paths are not covered.", "Application network diagnostics are not equivalent to old core ConnectionTest/URLTest/physical-underlying-network semantics for all workflows."]
+    },
+    {
+      "id": "build_and_verification",
+      "status": "待验证",
+      "scope": "Unified Go runtime/JNI/Android build and API 24 runtime",
+      "evidence": [
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/go.mod", "line": 10, "detail": "go.mod requires ./third_party/ryui and ../submodules replacements; current app root listing did not show third_party."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/scripts/build_android.py", "line": 97, "detail": "CI build requires pinned fork checkouts, RyUI checkout, NDK and Go; this review intentionally did not execute it."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/scripts/check_migration.py", "line": 71, "detail": "Existing checker explicitly reports Flutter/Dart feature parity as not_assessed."},
+        {"path": "D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/android/app/src/main/AndroidManifest.xml", "line": 44, "detail": "Manifest/active Kotlin source component closure is not currently verifiable."}
+      ],
+      "blockers": ["No local compile, install or runtime test was run by instruction.", "Current source dependencies and Android component references need a later recheck after parallel writes settle.", "API 24 functional behavior, fd ownership/dup-close, service teardown, Doze/restart, SAF and AppFunctions cannot be declared verified statically here."]
+    }
+  ],
+  "critical_omissions_for_parent_agent": [
+    "Highest priority: restore a complete Android Host component set. Manifest references LxBoxApplication/MainActivity/BoxVpnService/Tile/Boot/ExternalCommand/AppFunction classes absent from current active source; Host also references unresolved service/activity APIs.",
+    "Implement replacement for all 12 legacy streams. Current core handler is noop for status/groups/outbounds/connections/DNS; async event broadcasts are not consumed by new UI eventLog.",
+    "Finish Taildrop actual transfer path: ccTaildropSendBytes and ccTaildropPickAndSend explicitly error, ccTaildropSave is called by UI but absent from Controller dispatch.",
+    "Implement OpenConnect loopback callback platform methods; current Controller delegates openconnect.callback.start/stop while Host throws unknown method.",
+    "Complete legacy storage migration wiring by supplying NodeLinks/PresetIDs/SubscriptionBodies; apply vpn_settings and old category merge semantics instead of returning a warning.",
+    "Add Tasker/Locale/raw intent, Boot/watchdog, Quick Settings and AppFunctions implementations; current manifest declarations alone are not functionality.",
+    "Wire QR/server wizard and structured workflows; current high-level RyUI/JSON editors do not cover the 193 old screen workflow corpus.",
+    "Do not mark Builder/Parser complete: unsupported member flags/metadata and auto strategy fields are explicit fatal gaps; no full golden corpus or formatConfig/CoreRejectGuard equivalent was found.",
+    "Expose the existing WARP MASQUE/scan/endpoint methods and verify Tailscale state-directory lifecycle; current UI only registers basic WARP and uses unary Tailscale controls.",
+    "After the tree settles, run only the user-approved remote CI/build/runtime validation; local review intentionally did not build."
+  ],
+  "review_boundaries": [
+    "No Go/Gradle/NDK/Actions/git/build/runtime commands were run.",
+    "No source files outside D:/sing-box-app/sing-box-lx-1.14.4-lx.33/app/reports were modified.",
+    "A current missing file may be supplied by parallel work; only explicit no-op/error paths and current unresolved references are treated as confirmed blockers."
+  ]
+}

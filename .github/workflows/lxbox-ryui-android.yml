@@ -1,0 +1,205 @@
+name: LxBox RyUI Android manual build
+
+on:
+  workflow_dispatch:
+    inputs:
+      core_repository:
+        description: 'sing-box-lx repository cloned into the staging workspace'
+        required: true
+        default: 'Leadaxe/sing-box-lx'
+      core_commit:
+        description: 'Pinned sing-box-lx tag or commit; moving branch names are forbidden'
+        required: true
+        default: '2d9a0a52df7881f55484d48f9daecb21d135f3e9'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lxbox-ryui-android-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      GOTOOLCHAIN: local
+      GOFLAGS: '-buildvcs=false'
+      GOWORK: 'off'
+      NDK_VERSION: '28.2.13676358'
+      BUILD_TOOLS: '36.0.0'
+      CORE_REPOSITORY: ${{ inputs.core_repository }}
+      CORE_COMMIT: ${{ inputs.core_commit }}
+    steps:
+      - name: Check out independent app repository
+        uses: actions/checkout@v5
+        with:
+          path: app
+          persist-credentials: false
+          submodules: false
+
+      - name: Clone pinned sing-box-lx into core/
+        run: |
+          set -euo pipefail
+          test ! -e core
+          git clone --filter=blob:none --no-checkout "https://${CORE_REPOSITORY}.git" core
+          git -C core fetch --depth=1 origin "${CORE_COMMIT}"
+          git -C core checkout --detach FETCH_HEAD
+          git -C core rev-parse HEAD | tee core-commit.txt
+          test -f core/go.mod
+
+      - name: Apply checked app-owned core patch
+        run: |
+          set -euo pipefail
+          git -C core apply --check ../app/patches/sing-box-lx-core.patch
+          git -C core apply ../app/patches/sing-box-lx-core.patch
+          grep -q 'box_jni_onload' core/common/jni/jni_android.c
+          ! grep -q 'JNIEXPORT jint JNI_OnLoad' core/common/jni/jni_android.c
+
+      - name: Check out pinned wireguard fork
+        uses: actions/checkout@v5
+        with:
+          repository: Leadaxe/wireguard-go-awg2-lx
+          ref: 7188e1516995adbb116e7dbe343b9eb1c2159c82
+          path: core/submodules/wireguard-go
+          persist-credentials: false
+
+      - name: Check out pinned sing-tun fork
+        uses: actions/checkout@v5
+        with:
+          repository: Leadaxe/sing-tun-lx
+          ref: 94280f68f97bd4a296fa6a8648bcf312f304f69f
+          path: core/submodules/sing-tun
+          persist-credentials: false
+
+      - name: Check out pinned gvisor fork
+        uses: actions/checkout@v5
+        with:
+          repository: Leadaxe/gvisor-lx
+          ref: 117243aa02fa2915cb53d1d4549bfca3a3ebf238
+          path: core/submodules/gvisor
+          persist-credentials: false
+
+      - name: Check out pinned utls fork
+        uses: actions/checkout@v5
+        with:
+          repository: Leadaxe/utls-lx
+          ref: ad69b191e2f83367ec0ac5f3a1a61310732c43b9
+          path: core/submodules/utls
+          persist-credentials: false
+
+      - name: Check out pinned RyUI
+        uses: actions/checkout@v5
+        with:
+          repository: egoist/RyUI
+          ref: 5cb5e808f220e8c903f2c7cb64ad6d52281c9349
+          path: app/third_party/ryui
+          persist-credentials: false
+
+      - name: Set up Go 1.26.10
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.10'
+          cache: false
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK manager
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-37.0 build-tools;36.0.0 ndk;28.2.13676358'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+          cache-disabled: true
+
+      - name: Record revisions and toolchain
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          pins = json.loads(Path('app/scripts/dependencies.json').read_text())
+          pins['app_source_commit'] = os.environ['GITHUB_SHA']
+          pins['core_repository'] = os.environ['CORE_REPOSITORY']
+          pins['core_requested_ref'] = os.environ['CORE_COMMIT']
+          pins['core_source_commit'] = subprocess.check_output(['git', '-C', 'core', 'rev-parse', 'HEAD'], text=True).strip()
+          Path('artifacts/dependencies.json').write_text(json.dumps(pins, indent=2) + '\n')
+          PY
+          printf 'ANDROID_NDK_HOME=%s/ndk/%s\n' "$ANDROID_HOME" "$NDK_VERSION" >> "$GITHUB_ENV"
+          {
+            go version
+            java -version 2>&1
+            gradle --version
+            printf 'core_commit='; git -C core rev-parse HEAD
+            printf 'app_commit=%s\n' "$GITHUB_SHA"
+          } > artifacts/toolchain.txt 2>&1
+
+      - name: Prepare RyUI API 24 backports
+        run: |
+          set -euo pipefail
+          python3 app/scripts/prepare_ryui_api24.py app/third_party/ryui artifacts --core-root core 2>&1 | tee artifacts/prepare-api24.log
+
+      - name: Check app/core paths and migration structure
+        run: |
+          set -euo pipefail
+          python3 app/scripts/check_migration.py . --app-root app --core-root core --report artifacts/migration-report.json 2>&1 | tee artifacts/migration-check.log
+
+      - name: Resolve modules and run Go package checks
+        run: |
+          set -euo pipefail
+          python3 app/scripts/ci_go_checks.py --root . --app-root app --core-root core --artifacts artifacts 2>&1 | tee artifacts/go-checks.log
+
+      - name: Build unified native libraries and APK
+        run: |
+          set -euo pipefail
+          python3 app/scripts/build_android.py --root . --app-root app --core-root core --artifacts artifacts 2>&1 | tee artifacts/build.log
+
+      - name: Collect APK and diagnostics
+        if: always()
+        run: |
+          python3 app/scripts/collect_artifacts.py --root . --app-root app --core-root core --artifacts artifacts
+
+      - name: Summarize result
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          lines = [
+            '## LxBox RyUI independent app build\n',
+            f"App source: `{os.environ.get('GITHUB_SHA', '')}`.\n",
+            f"Core requested ref: `{os.environ.get('CORE_COMMIT', '')}`.\n",
+            'Go 1.26.10; JDK 17; NDK 28.2.13676358; min API 24; compile SDK 37; target SDK 36.\n',
+            'The workflow clones sing-box-lx into `core/` and applies the app-owned patch from `app/patches/`.\n',
+            '**No device or emulator is used. APK packaging does not prove API 24 runtime compatibility or full feature parity.**\n',
+          ]
+          for name in ('migration-report.json', 'apk-verification.json', 'artifact-report.json'):
+            path = Path('artifacts') / name
+            if path.exists():
+              report = json.loads(path.read_text())
+              lines.append(f"`{name}`: {report.get('status', 'collected')}\n")
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+            summary.write('\n'.join(lines))
+          PY
+
+      - name: Upload APK, manifest, patch and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lxbox-ryui-independent-${{ github.run_number }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 14

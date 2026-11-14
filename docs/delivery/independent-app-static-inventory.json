@@ -1,0 +1,14 @@
+{
+  "app": "D:\\sing-box-app\\lxbox-ryui-app",
+  "core": "D:\\sing-box-app\\sing-box-lx-1.14.4-lx.33",
+  "app_go_files": 102,
+  "app_go_tests": 20,
+  "app_kotlin_files": 5,
+  "app_dart_files": 0,
+  "old_core_app_exists": false,
+  "old_core_app_backup_exists": false,
+  "third_party_vendor_in_app": false,
+  "patch_exists": true,
+  "workflow_exists": true,
+  "static_report_exists": true
+}

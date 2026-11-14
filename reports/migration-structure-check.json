@@ -1,0 +1,78 @@
+{
+  "module": "github.com/Leadaxe/lxbox/app",
+  "status": "error",
+  "errors": [
+    "external checkout missing: github.com/egoist/ryui at ./third_party/ryui",
+    "external checkout missing: github.com/sagernet/wireguard-go at ../submodules/wireguard-go",
+    "external checkout missing: github.com/sagernet/sing-tun at ../submodules/sing-tun",
+    "external checkout missing: github.com/sagernet/gvisor at ../submodules/gvisor",
+    "external checkout missing: github.com/metacubex/utls at ../submodules/utls"
+  ],
+  "warnings": [
+    "mobile.Main assignment is not in source; CI overlay must inject exactly one writeOverlay-equivalent init",
+    "Dart/Flutter sources and runtime dependencies are absent; feature parity remains unassessed",
+    "1 source statements explicitly identify missing/unmigrated behavior; review functionality_gaps"
+  ],
+  "main_sources": [
+    "cmd/lxbox/main.go"
+  ],
+  "mobile_main_assignments": 0,
+  "embedded_asset_count": 56,
+  "dart_files": [],
+  "flutter_references": [],
+  "android_gradle_files": [
+    "app/android/app/build.gradle.kts",
+    "app/android/build.gradle.kts",
+    "app/android/settings.gradle.kts"
+  ],
+  "native_bootstrap_files": [
+    "android/app/src/main/kotlin/com/leadaxe/lxbox/android/Host.kt",
+    "mobile/bridge.go"
+  ],
+  "runtime_initialize_files": [
+    "internal/core/controller.go",
+    "mobile/bridge.go"
+  ],
+  "functionality_matrix": [
+    {
+      "surface": "Go application entrypoint",
+      "status": "present",
+      "evidence": "cmd/lxbox"
+    },
+    {
+      "surface": "Go runtime implementation",
+      "status": "present",
+      "evidence": "internal/runtime"
+    },
+    {
+      "surface": "Android host",
+      "status": "present",
+      "evidence": "android"
+    },
+    {
+      "surface": "Embedded resources",
+      "status": "present",
+      "evidence": "assets"
+    },
+    {
+      "surface": "Flutter/Dart feature parity",
+      "status": "not_assessed",
+      "evidence": "No feature-by-feature mapping is supplied; absence of Dart dependencies does not establish parity."
+    }
+  ],
+  "functionality_gaps": [
+    {
+      "file": "android/app/src/main/kotlin/com/leadaxe/lxbox/android/Host.kt",
+      "line": 245,
+      "detail": "Log.w(TAG, \"VPN package not installed: $name\")"
+    }
+  ],
+  "source_only": false,
+  "api24_scope": {
+    "min_sdk": 24,
+    "compile_sdk": 37,
+    "target_sdk": 36,
+    "runtime_verified": false
+  },
+  "migration_statement": "Dart/Flutter UI is not declared fully migrated; only listed Go, native host, and embedded assets are checked."
+}

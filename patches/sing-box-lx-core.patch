@@ -1,0 +1,13 @@
+diff --git a/common/jni/jni_android.c b/common/jni/jni_android.c
+--- a/common/jni/jni_android.c
++++ b/common/jni/jni_android.c
+@@ -2,8 +2,8 @@
+ #include <stdint.h>
+ 
+ static JavaVM *javaVM;
+ 
+-JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved) {
++JNIEXPORT jint box_jni_onload(JavaVM *vm, void *reserved) {
+ 	javaVM = vm;
+ 	return JNI_VERSION_1_6;
+ }
