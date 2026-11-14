@@ -574,7 +574,12 @@ func orderedKeys(section map[string]any, order []string) []string {
 func collectMapperPlan(section map[string]any, orders map[string][]string, pathName string, plan *[]mapperRecord) {
 	for _, key := range orderedKeys(section, orders[pathName]) {
 		switch key {
-		case "include", "defaults", "detect", "forms", "body_source", "unknown_key", "emit", "overlays", "note", "params", "label":
+		case "include", "defaults", "detect", "forms", "body_source", "unknown_key", "emit", "overlays", "note", "label":
+			continue
+		case "params":
+			if params, ok := section[key].(map[string]any); ok {
+				collectMapperPlan(params, orders, pathName+".params", plan)
+			}
 			continue
 		}
 		record, ok := section[key].(map[string]any)

@@ -114,7 +114,7 @@ func dnsRecordEffectiveRuleRecords(template, settings map[string]any) ([]any, bo
 		if id == "" {
 			continue
 		}
-		record := map[string]any{"kind": "preset", "ref": id, "enabled": true}
+		record := map[string]any{"kind": "preset", "ref": id, "enabled": true, "_seeded_default": true}
 		if num, ok := dnsRecordNumber(ui["num"]); ok {
 			record["num"] = num
 		}

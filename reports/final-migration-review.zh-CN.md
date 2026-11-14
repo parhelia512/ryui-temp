@@ -108,8 +108,8 @@
 
   本轮仅执行 `gofmt`、Python 单测与 `compileall`、`check_migration.py --source-only`，未运行 Go 测试或触发 Actions；golden 结果仍需 CI 复核。
 
-- 最新 Actions 日志暴露了上一轮执行器重写后的两个编译级回归：`orderedKeys`、`sourceList`、`getPath` 辅助函数在局部替换中被误删，以及 `applyMapperExtract` 调用参数未同步。现已整体恢复 mapper 执行器的辅助函数段，保留唯一声明，并使调用匹配当前签名。
-- 同一轮日志中的 builder 回归也已修复：DNS route mirror 只执行一次，避免固定 DNS 规则重复；preset remote rule_set 缺离线缓存恢复为 `offline_ruleset_missing` fatal，与 `TestBuildJSONReportsOfflineRuleSetWithoutNetwork` 契约一致。
+- 最新 Actions 再次确认 parser 已通过编译，但 contract golden 暴露出 mapper 计划构建时跳过整个 `params` 节点，导致只应用 `defaults`：server、端口、userinfo、TLS、transport 和协议参数全部丢失。现已恢复 `params` 递归收集；同时修复 `applyMapperExtract` 调用签名和 parser 辅助函数段。
+- builder 方面修复了默认 seeded preset 与用户显式 preset 的离线缓存策略：默认 preset 缺缓存只告警并跳过，显式 preset 仍产生 `offline_ruleset_missing` fatal；DNS 初始化控制流已恢复，默认 DNS server 可以正常 materialize，route mirror 只应用一次。
 - 本地只执行了指定 gofmt、Python 单测、`compileall` 和 `check_migration.py --source-only`；未运行 Go 测试、编译、Gradle、NDK 或 Actions。
 
 以下内容仍不能宣称与旧 Flutter 应用完全等价：
