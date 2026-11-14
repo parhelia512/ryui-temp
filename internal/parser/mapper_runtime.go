@@ -787,7 +787,10 @@ func getSourcePath(pathName string, state mapperState) (any, bool) {
 		case "user":
 			return parts[0], len(parts) > 0 && parts[0] != ""
 		case "pass":
-			return parts[1], len(parts) == 2
+			if len(parts) == 2 {
+				return parts[1], true
+			}
+			return nil, false
 		}
 		return nil, false
 	}

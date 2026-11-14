@@ -96,9 +96,9 @@ wireguard-go、sing-tun、gvisor、utls 子模块由固定 core commit 的 gitli
 
 最新 Actions 已通过 parser 编译，golden 阶段暴露出 mapper 计划跳过 `params` 节点的回归，导致 server、端口、userinfo、TLS、transport 和协议参数全部丢失；现已恢复 `params` 递归收集，并同步修复 `applyMapperExtract` 签名与 parser 辅助函数段。
 
-builder 方面已区分默认 seeded preset 和用户显式 preset：默认远程 rule_set 缺离线缓存只告警跳过，显式 preset 仍返回 `offline_ruleset_missing` fatal；DNS 初始化控制流与 route mirror 重复调用也已修复。
+最新 Actions 又暴露了两个确定性错误：`dns_records.go` 默认 preset 分支的 `record` 作用域错误，以及 HTTP/AnyTLS userinfo 单段密码读取 `parts[1]` 造成 runtime panic；两处均已修复。
 
-本轮本地仅执行 gofmt、Python 单测、`compileall` 与 `check_migration.py --source-only`，未运行 Go 编译/测试、Gradle、NDK 或 Actions。
+本地重新执行 gofmt、Python 单测、`compileall` 与 `check_migration.py --source-only` 均通过，未运行 Go 编译/测试、Gradle、NDK 或 Actions。
 
 仍未运行：
 

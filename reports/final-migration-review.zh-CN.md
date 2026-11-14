@@ -109,8 +109,8 @@
   本轮仅执行 `gofmt`、Python 单测与 `compileall`、`check_migration.py --source-only`，未运行 Go 测试或触发 Actions；golden 结果仍需 CI 复核。
 
 - 最新 Actions 再次确认 parser 已通过编译，但 contract golden 暴露出 mapper 计划构建时跳过整个 `params` 节点，导致只应用 `defaults`：server、端口、userinfo、TLS、transport 和协议参数全部丢失。现已恢复 `params` 递归收集；同时修复 `applyMapperExtract` 调用签名和 parser 辅助函数段。
-- builder 方面修复了默认 seeded preset 与用户显式 preset 的离线缓存策略：默认 preset 缺缓存只告警并跳过，显式 preset 仍产生 `offline_ruleset_missing` fatal；DNS 初始化控制流已恢复，默认 DNS server 可以正常 materialize，route mirror 只应用一次。
-- 本地只执行了指定 gofmt、Python 单测、`compileall` 和 `check_migration.py --source-only`；未运行 Go 测试、编译、Gradle、NDK 或 Actions。
+- 最新 Actions 又暴露了两个确定性问题：`dns_records.go` 的默认 preset 缓存分支引用了不在当前作用域的 `record`，已恢复为作用域安全的离线规则集处理；HTTP/AnyTLS golden 触发了 userinfo 单段密码的 `parts[1]` 越界，已改为先检查长度再取密码。
+- 本地重新执行 gofmt、Python 单测、`compileall` 和 `check_migration.py --source-only`，均通过；未运行 Go 测试/编译或触发 Actions。
 
 以下内容仍不能宣称与旧 Flutter 应用完全等价：
 
