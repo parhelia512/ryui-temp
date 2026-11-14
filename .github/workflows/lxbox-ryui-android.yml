@@ -47,7 +47,11 @@ jobs:
         run: |
           set -euo pipefail
           test ! -e core
-          git clone --filter=blob:none --no-checkout "https://${CORE_REPOSITORY}.git" core
+          CORE_URL="${CORE_REPOSITORY}"
+          if [[ "${CORE_URL}" != https://* && "${CORE_URL}" != http://* && "${CORE_URL}" != git@* ]]; then
+            CORE_URL="https://github.com/${CORE_URL}.git"
+          fi
+          git clone --filter=blob:none --no-checkout "${CORE_URL}" core
           git -C core fetch --depth=1 origin "${CORE_COMMIT}"
           git -C core checkout --detach FETCH_HEAD
           git -C core rev-parse HEAD | tee core-commit.txt
