@@ -20,9 +20,10 @@ func applyDNSRecords(config, template, settings map[string]any, state *buildStat
 		dns = map[string]any{}
 		config["dns"] = dns
 	}
+	dnsRecordApplyRouteMirrors(dns, settings, state)
 	options, _ := template["dns_options"].(map[string]any)
 	if options == nil {
-		state.warn("dns_records_template_missing", "template.dns_options", "DNS record catalog is absent", nil)
+		dnsRecordApplyRouteMirrors(dns, settings, state)
 		return nil
 	}
 
@@ -59,7 +60,6 @@ func applyDNSRecords(config, template, settings map[string]any, state *buildStat
 	if len(dnsRules) > 0 || hasRules {
 		dns["rules"] = dnsRules
 	}
-	dnsRecordApplyRouteMirrors(dns, settings, state)
 	return nil
 }
 
@@ -511,9 +511,10 @@ func dnsRecordExpandPresetBody(preset map[string]any, vars map[string]any, node 
 					continue
 				}
 			} else {
-				state.fatal("preset_ruleset_cache_missing", "selectable_rules."+id+".rule_set."+tag, "remote preset rule_set has no offline cache payload")
+				state.warn("preset_ruleset_cache_missing", "selectable_rules."+id+".rule_set."+tag, "remote preset rule_set has no offline cache payload", tag)
 				continue
 			}
+
 		}
 		parts.ruleSets = append(parts.ruleSets, item)
 	}

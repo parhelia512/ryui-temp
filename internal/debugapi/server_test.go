@@ -42,7 +42,7 @@ func TestServerLoopbackAuthAndDispatch(t *testing.T) {
 	if res.StatusCode != 401 {
 		t.Fatalf("unauthorized status %d", res.StatusCode)
 	}
-	req, err := http.NewRequest(http.MethodPost, base+"/action/switch-node?tag=n", "application/json", strings.NewReader(`{"extra":true}`))
+	req, err := http.NewRequest(http.MethodPost, base+"/action/switch-node?tag=n", strings.NewReader(`{"extra":true}`))
 	if err != nil {
 		t.Fatal(err)
 	}

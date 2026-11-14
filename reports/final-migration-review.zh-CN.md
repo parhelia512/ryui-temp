@@ -92,7 +92,7 @@
 
 - core 的四个 fork submodule 由锁定的 sing-box-lx commit 中的 gitlinks 决定；Actions 递归初始化，不再从 app workflow 另行覆盖版本。submodule revisions 会记录到 `core-submodules.txt` 和构建 artifact。
 
-- 新一轮 Actions 日志未出现 Go 编译器错误；失败集中在 parser contract URI golden。日志中的 AnyTLS/VLESS 大量差异暴露了通用 mapper 元数据未完整执行：协议 mapper 的 `userinfo`、`defaults`、`scheme_sets` 与 shared URI blocks 需要统一合并，不能只依赖协议顶层 `uri`。本轮已补上 mappers URI 的 userinfo/params/defaults/scheme_sets 读取、普通 URI 的 scheme defaults，以及字面量 query 解码；已用 gofmt 和 Python-only 检查验证，尚未运行 Go 测试。
+- 最新 Actions 日志已暴露并修复：mapper `includes` 变量遗漏、debugapi 测试的 `http.NewRequest` 参数错误、builder 默认 DNS preset 的离线 rule_set 不应阻断 fresh build、显式 custom preset 缺失缓存应统一报告 `offline_ruleset_missing`，以及 DNS fixed-IP mirror 被 catalog 缺失早退跳过的问题。
 
 以下内容仍不能宣称与旧 Flutter 应用完全等价：
 

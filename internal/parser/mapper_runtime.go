@@ -215,6 +215,7 @@ func executeMapper(state *mapperState, protocol *registryProtocol, dialect strin
 			setPath(state.entry, k, cloneValue(v))
 		}
 	}
+	includes := stringSlice(mapper["include"])
 	for _, inc := range includes {
 		parts := strings.SplitN(inc, "#", 2)
 		if len(parts) != 2 {
