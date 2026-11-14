@@ -92,7 +92,9 @@
 
 - core 的四个 fork submodule 由锁定的 sing-box-lx commit 中的 gitlinks 决定；Actions 递归初始化，不再从 app workflow 另行覆盖版本。submodule revisions 会记录到 `core-submodules.txt` 和构建 artifact。
 
-## 当前明确差异和限制
+- 本轮日志中的 app 编译问题已修复：debugapi 的 `pe` 作用域、builder ruleset 注册 helper 名称、core controller 中 WireGuard/Tailscale JSON 序列化变量声明、ruleset `ErrTooLarge` sentinel 传播，以及 storage 打开未版本化配置时保持只读。
+- 针对日志中的 parser WireGuard URI golden 回归，已让普通 URL 形式进入 contract mapper，仅把无 `@`/查询的 base64 `.conf` 形式保留给专用 INI 解码；查询值改为保留字面量 `+`，并补充 `default_when` 与 `maps_to` required 检查。该修复尚未在 Go CI 中执行验证。
+- Actions 同一轮的 storage legacy read-only 测试回归已修复；本机仅完成 gofmt 和 Python 静态检查，尚未用 Go 测试验证。
 
 以下内容仍不能宣称与旧 Flutter 应用完全等价：
 

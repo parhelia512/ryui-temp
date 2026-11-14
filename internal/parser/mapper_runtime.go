@@ -45,7 +45,7 @@ func mapContractURI(rawURI string, protocol string, source Source, reg *registry
 	if !ok {
 		return nil, nil, false
 	}
-	if mapperRequiresPayloadDecode(uri) {
+	if mapperForm(rawURI, uri) == "conf_b64" {
 		return nil, nil, false
 	}
 	params, hasParams := uri["params"]
@@ -62,7 +62,7 @@ func mapContractURI(rawURI string, protocol string, source Source, reg *registry
 	}
 	in := mapperInput{root: map[string]any{}, query: queryFold(u.RawQuery), scheme: strings.ToLower(u.Scheme), host: u.Hostname(), path: u.EscapedPath(), frag: u.Fragment, user: ""}
 	if u.User != nil {
-		in.user, _ = url.QueryUnescape(u.User.String())
+		in.user, _ = url.PathUnescape(u.User.String())
 	}
 	if u.Port() != "" {
 		in.port = intValue(u.Port())
@@ -95,21 +95,21 @@ func mapContractURI(rawURI string, protocol string, source Source, reg *registry
 	return ptrNode(makeNode(name, p.singboxType, map[string]any{"uri": rawURI}, state.entry, source, "uri")), state.diags, true
 }
 
-func mapperRequiresPayloadDecode(uri map[string]any) bool {
+func mapperForm(rawURI string, uri map[string]any) string {
 	forms, _ := uri["forms"].([]any)
-	for _, value := range forms {
-		form, _ := value.(map[string]any)
-		steps, _ := form["decode"].([]any)
-		for _, step := range steps {
-			if s, ok := step.(string); ok && s != "url" {
-				return true
-			}
-			if _, ok := step.(map[string]any); ok {
-				return true
+	body := rawURI
+	if i := strings.IndexByte(body, '#'); i >= 0 {
+		body = body[:i]
+	}
+	if !strings.Contains(body, "@") && !strings.Contains(body, "?") {
+		for _, value := range forms {
+			form, _ := value.(map[string]any)
+			if stringValue(form["id"]) == "conf_b64" {
+				return "conf_b64"
 			}
 		}
 	}
-	return false
+	return "url"
 }
 
 func mapperHasSpecialContainer(uri map[string]any) bool {
@@ -145,7 +145,10 @@ func mapContractXray(raw map[string]any, protocol string, source Source, reg *re
 			continue
 		}
 		in := mapperInput{root: cloneMap(raw), query: map[string][]string{}, scheme: "", base: base, form: "xray"}
-		state := &mapperState{entry: map[string]any{"type": p.singboxType}, input: in, reg: reg, seen: map[string]bool{}}
+		state := &mapperState{entry: map[string]any{"type": p.singboxType, "server": in.host}, input: in, reg: reg, seen: map[string]bool{}}
+		if in.port != nil {
+			state.entry["server_port"] = in.port
+		}
 		if err := executeMapper(state, p, "xray", xray); err != nil {
 			diags = append(diags, Diagnostic{Code: "mapper_error", Severity: "error", Message: err.Error(), Source: source})
 			continue
@@ -268,6 +271,14 @@ func executeRecords(state *mapperState, section map[string]any, orders map[strin
 					v, found = getSourcePath(df, *state)
 				}
 			}
+			if !found {
+				if defaults, ok := record["default_when"].(map[string]any); ok {
+					if absent, isBool := defaults["absent"].(bool); isBool && absent {
+						v, found = defaults["value"], true
+					}
+				}
+			}
+
 			if found {
 				v = coerceMapperValue(v, record, state.reg)
 				applyMapperValue(state, record, v)
@@ -406,7 +417,7 @@ func queryFold(raw string) map[string][]string {
 		if err != nil {
 			k = key
 		}
-		v, err := url.QueryUnescape(value)
+		v, err := url.PathUnescape(value)
 		if err != nil {
 			v = value
 		}
@@ -559,17 +570,21 @@ func resolveValueMapRef(reg *registry, ref, value string) any {
 	return nil
 }
 func requiredMissing(entry, uri map[string]any) bool {
-	required, ok := uri["required"].([]any)
-	if !ok {
-		return false
-	}
-	for _, item := range required {
-		field, ok := item.(string)
-		if !ok || field == "" {
-			continue
+	return requiredMissingInSection(entry, uri)
+}
+
+func requiredMissingInSection(entry map[string]any, section map[string]any) bool {
+	if required, ok := section["required"].(bool); ok && required {
+		if mapsTo, ok := section["maps_to"].(string); ok && mapsTo != "" {
+			value, exists := getPath(entry, strings.ReplaceAll(mapsTo, "[]", ".0"))
+			if !exists || value == nil || value == "" {
+				return true
+			}
 		}
-		value, exists := getPath(entry, field)
-		if !exists || value == nil || value == "" {
+	}
+	for _, value := range section {
+		child, ok := value.(map[string]any)
+		if ok && requiredMissingInSection(entry, child) {
 			return true
 		}
 	}

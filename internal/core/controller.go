@@ -525,10 +525,10 @@ func wireguardJSON(v *libbox.WireGuardEndpointStatus, err error) (any, error) {
 	if v == nil {
 		return nil, nil
 	}
-	"peers" := []any{}
-	"it" := v.Peers()
+	peers := []any{}
+	it := v.Peers()
 	for it != nil && it.HasNext() {
-		"p" := it.Next()
+		p := it.Next()
 		if p != nil {
 			peers = append(peers, map[string]any{"publicKey": p.PublicKey, "endpoint": p.Endpoint, "lastHandshakeUnix": p.LastHandshakeUnix, "rxBytes": p.RxBytes, "txBytes": p.TxBytes, "sessionRxBytes": p.SessionRxBytes, "sessionTxBytes": p.SessionTxBytes})
 		}
@@ -536,7 +536,7 @@ func wireguardJSON(v *libbox.WireGuardEndpointStatus, err error) (any, error) {
 	return map[string]any{"endpointTag": v.EndpointTag, "endpointState": v.EndpointState, "idleSinceSeconds": v.IdleSinceSeconds, "peers": peers}, nil
 }
 func iteratorStrings(it libbox.StringIterator) []string {
-	"out" := []string{}
+	out := []string{}
 	for it != nil && it.HasNext() {
 		out = append(out, it.Next())
 	}
@@ -549,21 +549,21 @@ func tailscaleJSON(v *libbox.TailscaleEndpointStatus, err error) (any, error) {
 	if v == nil {
 		return nil, nil
 	}
-	"peerJSON" := func(p *libbox.TailscalePeer) any {
+	peerJSON := func(p *libbox.TailscalePeer) any {
 		if p == nil {
 			return nil
 		}
 		return map[string]any{"stableId": p.StableID, "hostName": p.HostName, "dnsName": p.DNSName, "os": p.OS, "tailscaleIps": iteratorStrings(p.TailscaleIPs()), "sshHostKeys": iteratorStrings(p.SSHHostKeys()), "online": p.Online, "exitNode": p.ExitNode, "exitNodeOption": p.ExitNodeOption, "shareeNode": p.ShareeNode, "expired": p.Expired, "active": p.Active, "canReceiveFiles": p.CanReceiveFiles, "rxBytes": p.RxBytes, "txBytes": p.TxBytes, "keyExpiry": p.KeyExpiry, "lastSeen": p.LastSeen, "path": p.Path, "endpoint": p.Endpoint, "peerRelay": p.PeerRelay, "derpRegionCode": p.DERPRegionCode, "lastHandshake": p.LastHandshake}
 	}
-	"groups" := []any{}
-	"gi" := v.UserGroups()
+	groups := []any{}
+	gi := v.UserGroups()
 	for gi != nil && gi.HasNext() {
-		"g" := gi.Next()
+		g := gi.Next()
 		if g == nil {
 			continue
 		}
-		"peers" := []any{}
-		"pi" := g.Peers()
+		peers := []any{}
+		pi := g.Peers()
 		for pi != nil && pi.HasNext() {
 			peers = append(peers, peerJSON(pi.Next()))
 		}

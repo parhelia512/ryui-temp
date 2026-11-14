@@ -374,6 +374,11 @@ func (s *Store) load() error {
 		return err
 	}
 	if _, hasVersion := integerValue(doc["storage_version"]); !hasVersion {
+		report.ReadOnly = true
+		report.Warnings = append(report.Warnings, "legacy settings are loaded read-only until explicit migration succeeds")
+	}
+	if _, hasVersion := integerValue(doc["storage_version"]); !hasVersion {
+
 		legacyCopy := main + ".v0.bak"
 		if _, statErr := os.Stat(legacyCopy); errors.Is(statErr, os.ErrNotExist) {
 			if err := s.writeAtomicLocked(legacyCopy, data, 0o600); err != nil {

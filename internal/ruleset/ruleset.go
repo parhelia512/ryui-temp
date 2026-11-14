@@ -358,8 +358,11 @@ func (c *Client) DownloadWith(ctx context.Context, id, rawURL string, options Do
 		}
 		if readErr != nil {
 			if errors.Is(readErr, ErrTooLarge) {
-				return c.finishWithMeta(id, path, Failed, previous, readErr.Error(), "")
+				result := c.finishWithMeta(id, path, Failed, previous, readErr.Error(), "")
+				result.Err = ErrTooLarge
+				return result
 			}
+
 			if attempt+1 < attempts {
 				if err := wait(requestCtx, backoffAt(backoffs, attempt)); err != nil {
 					return c.finishWithMeta(id, path, Failed, previous, shortError(err), "")

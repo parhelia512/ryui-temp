@@ -87,7 +87,9 @@ common/jni/jni_android.c: JNI_OnLoad -> box_jni_onload
 
 已修复 app 侧 parser registry 重名、mapper helper 与变量作用域、storage `loaded` 字段、workspace `model` 导入、automation 未使用变量、ruleset 测试返回值，以及 transfer plaintext base64/原文兼容问题。
 
-wireguard-go、sing-tun、gvisor、utls 子模块由固定 core commit 的 gitlinks 决定，workflow 使用递归 submodule 初始化，不由 app 独立 pin 或覆盖。已去掉此前按 SHA 独立 checkout 的方式，因此此前基于旧独立 wireguard SHA 的 API mismatch 提示不再适用于当前 Actions 布局；实际 submodule SHA 以 `core-submodules.txt` 为准。未触发 Actions。
+wireguard-go、sing-tun、gvisor、utls 子模块由固定 core commit 的 gitlinks 决定，workflow 使用递归 submodule 初始化，不由 app 独立 pin 或覆盖。实际 submodule SHA 以 `core-submodules.txt` 为准。
+
+本轮 Actions 日志中的 debugapi、builder、core controller 编译错误已修复；ruleset 大小限制测试的错误 sentinel 传播与 storage legacy read-only 测试回归也已修复。针对 parser WireGuard URI golden，普通 URL 现进入 contract mapper，只有 base64 `.conf` 形式走专用 INI 解码，并保留查询值中的字面量 `+`；同时补上 mapper 的默认值和 required 检查。本机未运行 Go 测试，因此这批修复仍需在 Go CI 中验证。未触发 Actions。
 
 仍未运行：
 

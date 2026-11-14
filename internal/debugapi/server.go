@@ -454,7 +454,8 @@ func publicError(err error) *automation.Error {
 	if err == nil {
 		return nil
 	}
-	if pe := automation.PublicError(err); pe.Code != "internal" || pe.Message != "internal error" {
+	pe := automation.PublicError(err)
+	if pe.Code != "internal" || pe.Message != "internal error" {
 		return pe
 	}
 	if errors.Is(err, context.DeadlineExceeded) {

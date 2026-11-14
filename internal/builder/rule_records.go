@@ -67,7 +67,8 @@ func applyRuleRecords(config, template, settings map[string]any, cache CacheInpu
 			}
 			parts := dnsRecordExpandPreset(config, preset, record, cache, state)
 			for _, set := range parts.ruleSets {
-				dnsRecordRegisterRuleSet(route, set, knownRuleSets, cache, state)
+				ruleRecordRegisterRuleSet(route, set, knownRuleSets, cache, state)
+
 			}
 			for _, rule := range parts.route {
 				rules = append(rules, rule)
