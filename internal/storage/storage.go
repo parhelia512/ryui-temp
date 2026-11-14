@@ -45,6 +45,7 @@ type Store struct {
 	generation          uint64
 	tmpSeq              uint64
 	recoveredFromBackup bool
+	loaded              bool
 }
 
 type MigrationReport struct {

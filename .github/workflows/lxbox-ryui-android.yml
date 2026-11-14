@@ -46,15 +46,18 @@ jobs:
       - name: Clone pinned sing-box-lx into core/
         run: |
           set -euo pipefail
+          mkdir -p artifacts
           test ! -e core
           CORE_URL="${CORE_REPOSITORY}"
           if [[ "${CORE_URL}" != https://* && "${CORE_URL}" != http://* && "${CORE_URL}" != git@* ]]; then
             CORE_URL="https://github.com/${CORE_URL}.git"
           fi
-          git clone --filter=blob:none --no-checkout "${CORE_URL}" core
+          git clone --filter=blob:none --no-checkout --recurse-submodules "${CORE_URL}" core
           git -C core fetch --depth=1 origin "${CORE_COMMIT}"
           git -C core checkout --detach FETCH_HEAD
+          git -C core submodule update --init --recursive
           git -C core rev-parse HEAD | tee core-commit.txt
+          git -C core submodule status --recursive | tee artifacts/core-submodules.txt
           test -f core/go.mod
 
       - name: Apply checked app-owned core patch
@@ -64,38 +67,6 @@ jobs:
           git -C core apply ../app/patches/sing-box-lx-core.patch
           grep -q 'box_jni_onload' core/common/jni/jni_android.c
           ! grep -q 'JNIEXPORT jint JNI_OnLoad' core/common/jni/jni_android.c
-
-      - name: Check out pinned wireguard fork
-        uses: actions/checkout@v5
-        with:
-          repository: Leadaxe/wireguard-go-awg2-lx
-          ref: 7188e1516995adbb116e7dbe343b9eb1c2159c82
-          path: core/submodules/wireguard-go
-          persist-credentials: false
-
-      - name: Check out pinned sing-tun fork
-        uses: actions/checkout@v5
-        with:
-          repository: Leadaxe/sing-tun-lx
-          ref: 94280f68f97bd4a296fa6a8648bcf312f304f69f
-          path: core/submodules/sing-tun
-          persist-credentials: false
-
-      - name: Check out pinned gvisor fork
-        uses: actions/checkout@v5
-        with:
-          repository: Leadaxe/gvisor-lx
-          ref: 117243aa02fa2915cb53d1d4549bfca3a3ebf238
-          path: core/submodules/gvisor
-          persist-credentials: false
-
-      - name: Check out pinned utls fork
-        uses: actions/checkout@v5
-        with:
-          repository: Leadaxe/utls-lx
-          ref: ad69b191e2f83367ec0ac5f3a1a61310732c43b9
-          path: core/submodules/utls
-          persist-credentials: false
 
       - name: Check out pinned RyUI
         uses: actions/checkout@v5

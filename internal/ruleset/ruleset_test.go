@@ -120,7 +120,7 @@ func (f roundTripFunc) Do(r *http.Request) (*http.Response, error) { return f(r)
 
 func TestDownloadSizeLimitCancellationAndOfflineRead(t *testing.T) {
 	client := newTestClient(t, WithMaxBytes(4), WithHTTPClient(roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: http.NoBody, ContentLength: 5, Request: r}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: http.NoBody, ContentLength: 5, Request: r}, nil
 	})))
 	result := client.DownloadWith(context.Background(), "limited", "http://example.invalid/rs", DownloadOptions{Attempts: 1})
 	if result.Outcome != Failed || !errors.Is(result.Err, ErrTooLarge) {

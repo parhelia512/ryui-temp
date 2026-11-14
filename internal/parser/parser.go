@@ -949,7 +949,7 @@ func applyQuery(dst map[string]any, protocol string, values url.Values, registry
 		}
 		setPath(dst, canonical, valueAny)
 	}
-	if p := registryProtocol(registry, protocol); p != nil {
+	if p := registryProtocolFor(registry, protocol); p != nil {
 		for key, param := range p.params {
 			if _, exists := values[key]; !exists && param.defaultSet {
 				setPath(dst, param.mapsTo, param.defaultValue)
@@ -1725,7 +1725,4 @@ func (r *registry) mapParam(protocol, key string) string {
 		return "server_port"
 	}
 	return key
-}
-func registryProtocol(r *registry, protocol string) *registryProtocol {
-	return registryProtocolFor(r, protocol)
 }

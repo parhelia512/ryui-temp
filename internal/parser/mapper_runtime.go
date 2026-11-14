@@ -496,7 +496,8 @@ func coerceMapperValue(v any, record map[string]any, reg *registry) any {
 			v = mapped
 		}
 	}
-	if typ := stringValue(record["type"]); typ == "int" {
+	typ := stringValue(record["type"])
+	if typ == "int" {
 		if i := intValue(v); i != nil {
 			v = i
 		}
@@ -557,6 +558,33 @@ func resolveValueMapRef(reg *registry, ref, value string) any {
 	}
 	return nil
 }
+func requiredMissing(entry, uri map[string]any) bool {
+	required, ok := uri["required"].([]any)
+	if !ok {
+		return false
+	}
+	for _, item := range required {
+		field, ok := item.(string)
+		if !ok || field == "" {
+			continue
+		}
+		value, exists := getPath(entry, field)
+		if !exists || value == nil || value == "" {
+			return true
+		}
+	}
+	return false
+}
+
+func containsAny(values []any, got any) bool {
+	for _, value := range values {
+		if stringValue(value) == stringValue(got) {
+			return true
+		}
+	}
+	return false
+}
+
 func conditionMatches(raw any, state *mapperState) bool {
 	m, ok := raw.(map[string]any)
 	if !ok || len(m) == 0 {

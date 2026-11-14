@@ -737,7 +737,7 @@ func maskAddresses(s string) string {
 	return networkAddressPattern.ReplaceAllStringFunc(s, func(address string) string {
 		trimmed := strings.Trim(address, "[]")
 		if strings.Contains(trimmed, ":") {
-			if host, port, err := net.SplitHostPort(trimmed); err == nil && port != "" {
+			if _, port, err := net.SplitHostPort(trimmed); err == nil && port != "" {
 				return "***:" + port
 			}
 			if ip := net.ParseIP(trimmed); ip != nil {

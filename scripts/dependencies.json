@@ -7,11 +7,9 @@
     "version_file": "../core/upstream.version",
     "version": "1.14.4-lx.33",
     "patch": "patches/sing-box-lx-core.patch",
-    "fork_replaces": {
-      "github.com/sagernet/wireguard-go": {"path": "../core/submodules/wireguard-go", "repository": "Leadaxe/wireguard-go-awg2-lx", "commit": "7188e1516995adbb116e7dbe343b9eb1c2159c82"},
-      "github.com/sagernet/sing-tun": {"path": "../core/submodules/sing-tun", "repository": "Leadaxe/sing-tun-lx", "commit": "94280f68f97bd4a296fa6a8648bcf312f304f69f"},
-      "github.com/sagernet/gvisor": {"path": "../core/submodules/gvisor", "repository": "Leadaxe/gvisor-lx", "commit": "117243aa02fa2915cb53d1d4549bfca3a3ebf238"},
-      "github.com/metacubex/utls": {"path": "../core/submodules/utls", "repository": "Leadaxe/utls-lx", "commit": "ad69b191e2f83367ec0ac5f3a1a61310732c43b9"}
+    "submodules": {
+      "source": "core/.gitmodules and gitlinks recorded by core_commit",
+      "paths": ["submodules/wireguard-go", "submodules/sing-tun", "submodules/gvisor", "submodules/utls"]
     }
   },
   "ryui": {"repository": "egoist/RyUI", "commit": "5cb5e808f220e8c903f2c7cb64ad6d52281c9349", "module": "github.com/egoist/ryui", "path": "third_party/ryui"},
@@ -21,10 +19,7 @@
     "../core/go.mod",
     "../core/cmd/internal/build_libbox/main.go",
     "../core/cmd/internal/build_shared/flags.go",
-    "patches/sing-box-lx-core.patch",
-    "https://github.com/Leadaxe/wireguard-go-awg2-lx/commit/7188e1516995adbb116e7dbe343b9eb1c2159c82",
-    "https://github.com/Leadaxe/sing-tun-lx/commit/94280f68f97bd4a296fa6a8648bcf312f304f69f",
-    "https://github.com/Leadaxe/gvisor-lx/commit/117243aa02fa2915cb53d1d4549bfca3a3ebf238",
-    "https://github.com/Leadaxe/utls-lx/commit/ad69b191e2f83367ec0ac5f3a1a61310732c43b9"
+    "../core/.gitmodules",
+    "patches/sing-box-lx-core.patch"
   ]
 }

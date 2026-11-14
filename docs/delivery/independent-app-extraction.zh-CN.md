@@ -51,7 +51,7 @@ $GITHUB_WORKSPACE/
 3. detached checkout 固定 `core_commit`。
 4. `git -C core apply --check ../app/patches/sing-box-lx-core.patch`。
 5. 应用 patch。
-6. 在 `core/submodules/` checkout 四个固定 fork SHA。
+6. 使用 core commit 自带的 gitlinks 初始化四个 submodules；不由 app workflow 独立指定或覆盖 fork SHA。
 7. 在 `app/third_party/ryui` checkout 固定 RyUI SHA。
 8. 运行 app scripts，脚本显式接收 `--app-root app --core-root core`。
 9. 产出统一 `liblxbox.so` 和 APK 诊断 artifacts。
@@ -78,9 +78,16 @@ common/jni/jni_android.c: JNI_OnLoad -> box_jni_onload
 
 本次在独立 app 仓库上执行了 Python-only 静态检查：
 
-- `D:\\go\\bin\\gofmt.exe -w` 格式化 102 个 app Go 文件，随后 `gofmt -d` 退出码为 0。
-- Python AST、YAML、JSON、XML、Go/Kotlin tree-sitter 静态解析无语法错误。
-- 独立布局 source-only migration 检查通过；外部 RyUI 和四个 fork 在本机未 checkout，属于预期 warning。
+- 初始抽取阶段 `D:\\go\\bin\\gofmt.exe -w` 格式化 102 个 app Go 文件，随后 `gofmt -d` 退出码为 0；本轮修复涉及的 Go 文件也已重新格式化并确认无差异。
+- Python 脚本单元测试（2 tests）与 `compileall` 通过。
+- 独立布局 source-only migration 检查通过；外部 RyUI 和 core submodule checkout 在本机未完成，属于预期 warning。
+- `ci_go_checks.py` 因本地 staging workspace 缺失 Actions checkout 的外部依赖，在 Go 检查前置依赖验证处停止；本机未执行 Go 编译/测试/vet。
+
+## 本轮 Actions 编译错误跟进
+
+已修复 app 侧 parser registry 重名、mapper helper 与变量作用域、storage `loaded` 字段、workspace `model` 导入、automation 未使用变量、ruleset 测试返回值，以及 transfer plaintext base64/原文兼容问题。
+
+wireguard-go、sing-tun、gvisor、utls 子模块由固定 core commit 的 gitlinks 决定，workflow 使用递归 submodule 初始化，不由 app 独立 pin 或覆盖。已去掉此前按 SHA 独立 checkout 的方式，因此此前基于旧独立 wireguard SHA 的 API mismatch 提示不再适用于当前 Actions 布局；实际 submodule SHA 以 `core-submodules.txt` 为准。未触发 Actions。
 
 仍未运行：
 

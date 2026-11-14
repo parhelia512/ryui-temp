@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/Leadaxe/lxbox/app/internal/model"
 )
 
 // WorkspaceSlot is a saved workspace entry. Extra retains slot fields written

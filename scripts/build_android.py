@@ -23,7 +23,7 @@ ABIS = {
     "armeabi-v7a": ("arm", "armv7a-linux-androideabi24-clang", "7"),
     "x86_64": ("amd64", "x86_64-linux-android24-clang", None),
 }
-EXPECTED_FORKS = {
+EXPECTED_SUBMODULES = {
     "github.com/sagernet/wireguard-go": "../core/submodules/wireguard-go",
     "github.com/sagernet/sing-tun": "../core/submodules/sing-tun",
     "github.com/sagernet/gvisor": "../core/submodules/gvisor",
@@ -113,12 +113,12 @@ def ensure_dependencies(root: Path, app: Path, core: Path) -> None:
         raise RuntimeError("app/go.mod must replace github.com/sagernet/sing-box => ../core")
     if not (core / "go.mod").is_file():
         raise RuntimeError(f"pinned core checkout is missing: {core}")
-    for module, target in EXPECTED_FORKS.items():
+    for module, target in EXPECTED_SUBMODULES.items():
         if replaces.get(module) != target:
             raise RuntimeError(f"{module} must replace to {target}, got {replaces.get(module)!r}")
         path = (app / target).resolve()
         if not (path / "go.mod").is_file():
-            raise RuntimeError(f"pinned fork checkout is missing or has no go.mod: {path}")
+            raise RuntimeError(f"core submodule checkout is missing or has no go.mod: {path}")
     ryui = app / "third_party" / "ryui" / "go.mod"
     if not ryui.is_file():
         raise RuntimeError(f"RyUI checkout is missing: {ryui}")

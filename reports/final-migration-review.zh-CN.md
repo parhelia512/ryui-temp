@@ -63,7 +63,7 @@
 
 - 仅 `workflow_dispatch`。
 - 固定 RyUI：`5cb5e808f220e8c903f2c7cb64ad6d52281c9349`。
-- 固定 fork：wireguard-go、sing-tun、gvisor、utls 均按 `dependencies.json` 中的 SHA checkout，不跟随分支 tip。
+- core 的四个 fork submodule 不再由 app workflow 独立 pin 或覆盖；Actions 使用固定 core commit 的 gitlinks，通过 `git clone --recurse-submodules` 和 `git submodule update --init --recursive` 获取，实际子模块 SHA 由该 core commit 决定。
 - Go 1.26.10、JDK 17、NDK 28.2.13676358、compile SDK 37.0、target SDK 36、min SDK/NDK 编译目标 24。
 - 三 ABI：arm64-v8a、armeabi-v7a、x86_64。
 - 统一 native 库：`liblxbox.so`；构建参数包含 16 KiB page alignment。
@@ -72,11 +72,13 @@
 
 ## 静态验证结果
 
-本机只执行了 Python 静态检查，未执行 Go、gofmt、Gradle、NDK、Git 或 GitHub Actions：
+本机只执行了 Python 静态检查和指定 Go 文件的 gofmt 格式验证，未执行 Go 编译/测试、Gradle、NDK、Git 或 GitHub Actions：
 
-- `scan_sources.py`：当前 102 个 Go、5 个 Kotlin、5 个 Python、JSON/XML/YAML 资源扫描无语法错误。
-- `scan_symbols.py`：重复函数/方法扫描已清理测试辅助函数重名；实际业务代码没有重复声明结果。
-- `check_migration.py --source-only`：`status=ok`、`errors=0`；外部 RyUI/fork checkout 缺失是预期 warning，等待 Actions checkout。
+- Python 脚本单元测试通过（2 tests）；`compileall` 通过。
+- `D:\\go\\bin\\gofmt.exe -w` 已格式化本次修复涉及的 Go 文件，随后 `gofmt -d` 无差异。
+- `check_migration.py --source-only`：`status=ok`、`errors=0`；外部 RyUI 和 core submodule checkout 缺失是预期 warning，等待 Actions checkout。
+- 本轮已修复 app 自身的 parser registry 函数重名、mapper helper/变量作用域、storage `loaded` 字段、workspace `model` 导入、automation 未使用变量、ruleset 测试返回值，以及 transfer plaintext 的 base64/原文兼容。
+- `ci_go_checks.py` 未执行到 Go 阶段，因为本地 staging workspace 缺少 Actions 才会 checkout 的 RyUI 和四个 fork；该前置失败不代表源码编译失败。
 - `app` 内 Dart 文件：0。
 - 新 app 的 Flutter runtime 引用：0。
 - 契约语料：2,110 个文件。
@@ -85,6 +87,10 @@
 - 功能差异快照：`app/reports/functionality-review.json`。
 
 “静态检查通过”只说明源文件可以被静态 parser 读取，不代表 Go 类型检查、链接、APK 构建或 Android 运行已经通过。
+
+## 本轮 Actions 错误修复记录
+
+- core 的四个 fork submodule 由锁定的 sing-box-lx commit 中的 gitlinks 决定；Actions 递归初始化，不再从 app workflow 另行覆盖版本。submodule revisions 会记录到 `core-submodules.txt` 和构建 artifact。
 
 ## 当前明确差异和限制
 

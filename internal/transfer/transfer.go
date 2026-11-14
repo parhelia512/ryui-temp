@@ -837,6 +837,9 @@ func byteArg(value any) ([]byte, bool) {
 
 func plaintextArg(value any) ([]byte, bool) {
 	if text, ok := value.(string); ok {
+		if decoded, valid := byteArg(text); valid {
+			return decoded, true
+		}
 		return []byte(text), true
 	}
 	return byteArg(value)
