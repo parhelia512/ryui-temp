@@ -205,12 +205,16 @@ func expandArrayBase(raw map[string]any, pathName string) []string {
 }
 
 func executeMapper(state *mapperState, protocol *registryProtocol, dialect string, mapper map[string]any) error {
-	if defs, ok := mapper["defaults"].(map[string]any); ok {
-		for k, v := range defs {
+	if defaults := protocol.defaults; len(defaults) > 0 {
+		for k, v := range defaults {
 			setPath(state.entry, k, cloneValue(v))
 		}
 	}
-	includes := stringSlice(mapper["include"])
+	if schemeSets, ok := protocol.schemeSets[state.input.scheme].(map[string]any); ok {
+		for k, v := range schemeSets {
+			setPath(state.entry, k, cloneValue(v))
+		}
+	}
 	for _, inc := range includes {
 		parts := strings.SplitN(inc, "#", 2)
 		if len(parts) != 2 {

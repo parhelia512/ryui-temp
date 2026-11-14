@@ -1483,6 +1483,8 @@ type registryProtocol struct {
 	params              map[string]registryParam
 	raw                 map[string]any
 	order               map[string][]string
+	schemeSets          map[string]any
+	defaults            map[string]any
 }
 type registryParam struct {
 	mapsTo       string
@@ -1608,7 +1610,7 @@ func mergeParserMap(dst, src map[string]any) {
 }
 
 func registryFromMap(m map[string]any) *registryProtocol {
-	p := &registryProtocol{raw: m, order: map[string][]string{}}
+	p := &registryProtocol{raw: m, order: map[string][]string{}, params: map[string]registryParam{}, schemeSets: map[string]any{}, defaults: map[string]any{}}
 	p.scheme = stringValue(m["scheme"])
 	p.singboxType = stringValue(m["singbox_type"])
 	if a, ok := m["aliases"].([]any); ok {
@@ -1619,7 +1621,6 @@ func registryFromMap(m map[string]any) *registryProtocol {
 		}
 	}
 	p.userSep = ":"
-	p.params = map[string]registryParam{}
 	if uri, ok := m["uri"].(map[string]any); ok {
 		if ui, ok := uri["userinfo"].(map[string]any); ok {
 			if into, ok := ui["into"].([]any); ok {
@@ -1641,24 +1642,58 @@ func registryFromMap(m map[string]any) *registryProtocol {
 			}
 		}
 	}
+	if uri, ok := m["uri"].(map[string]any); ok {
+		registryProtocolMetadata(p, uri)
+	}
 	if ms, ok := m["mappers"].(map[string]any); ok {
 		if um, ok := ms["uri"].(map[string]any); ok {
-			if q, ok := um["params"].(map[string]any); ok {
-				for k, v := range q {
-					if mm, ok := v.(map[string]any); ok {
-						p.params[k] = paramFromRegistryMap(mm)
-					}
-				}
+			registryProtocolMetadata(p, um)
+			if schemes, ok := um["scheme_sets"].(map[string]any); ok {
+				p.schemeSets = schemes
 			}
 			if defs, ok := um["defaults"].(map[string]any); ok {
 				for k, v := range defs {
-					p.params[k] = registryParam{mapsTo: k, defaultValue: v, defaultSet: true}
+					p.defaults[k] = v
 				}
 			}
 		}
 	}
 	return p
 }
+
+func registryProtocolMetadata(p *registryProtocol, uri map[string]any) {
+	if ui, ok := uri["userinfo"].(map[string]any); ok {
+		if into, ok := ui["into"].([]any); ok {
+			for _, v := range into {
+				if s, ok := v.(string); ok {
+					p.userInto = appendUniqueString(p.userInto, s)
+				}
+			}
+		}
+		if split, ok := ui["split"].(map[string]any); ok {
+			if sep := stringValue(split["sep"]); sep != "" {
+				p.userSep = sep
+			}
+		}
+	}
+	if q, ok := uri["query"].(map[string]any); ok {
+		for k, v := range q {
+			if mm, ok := v.(map[string]any); ok {
+				p.params[k] = paramFromRegistryMap(mm)
+			}
+		}
+	}
+}
+
+func appendUniqueString(values []string, value string) []string {
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
+}
+
 func paramFromRegistryMap(m map[string]any) registryParam {
 	p := registryParam{mapsTo: stringValue(m["maps_to"])}
 	if p.mapsTo == "" {

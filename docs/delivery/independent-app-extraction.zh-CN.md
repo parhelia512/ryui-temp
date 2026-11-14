@@ -89,7 +89,7 @@ common/jni/jni_android.c: JNI_OnLoad -> box_jni_onload
 
 wireguard-go、sing-tun、gvisor、utls 子模块由固定 core commit 的 gitlinks 决定，workflow 使用递归 submodule 初始化，不由 app 独立 pin 或覆盖。实际 submodule SHA 以 `core-submodules.txt` 为准。
 
-本轮 Actions 日志中的 debugapi、builder、core controller 编译错误已修复；ruleset 大小限制测试的错误 sentinel 传播与 storage legacy read-only 测试回归也已修复。针对 parser WireGuard URI golden，普通 URL 现进入 contract mapper，只有 base64 `.conf` 形式走专用 INI 解码，并保留查询值中的字面量 `+`；同时补上 mapper 的默认值和 required 检查。本机未运行 Go 测试，因此这批修复仍需在 Go CI 中验证。未触发 Actions。
+本轮 Actions 日志没有新的 Go 编译器错误；Go 纯测试在 parser contract URI golden 阶段失败。AnyTLS/VLESS 大量 URI 差异表明通用 mapper 元数据执行不完整：`mappers.uri` 自身的 userinfo、defaults、scheme_sets 以及 shared URI blocks 必须合并执行。本轮已补充这些读取路径、普通 URI 的 scheme defaults 和字面量 query 解码，并完成 gofmt/Python-only 检查；本机未运行 Go 测试，需重新运行 Actions 验证。未触发 Actions。
 
 仍未运行：
 
