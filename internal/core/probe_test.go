@@ -15,11 +15,17 @@ func TestDecodeProbeCandidateOwnConfiguration(t *testing.T) {
 	for _, field := range []string{"config", "raw_config"} {
 		for _, asString := range []bool{false, true} {
 			var input any = json.RawMessage(config)
-			if asString { input = config }
+			if asString {
+				input = config
+			}
 			raw, err := json.Marshal(map[string]any{field: input, "outbound_tag": "candidate", "timeout_ms": 5000, "link": "https://example.com/generate_204"})
-			if err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
 			decoded, err := decodeProbeCandidate(raw)
-			if err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
 			if decoded.config != config || decoded.outboundTag != "candidate" || decoded.timeoutMS != 5000 {
 				t.Fatalf("candidate arguments changed: %#v", decoded)
 			}
@@ -61,26 +67,46 @@ func TestCandidateProbeMonitorOwnsOnlyItsID(t *testing.T) {
 	platform := &candidateProbePlatform{
 		ctx: context.Background(),
 		platformAdapter: &platformAdapter{call: func(_ context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
-			var args struct { ID uint64 `json:"id"` }
-			if err := json.Unmarshal(raw, &args); err != nil { return nil, err }
-			if args.ID == 0 { t.Fatal("probe monitor used unscoped host callback") }
+			var args struct {
+				ID uint64 `json:"id"`
+			}
+			if err := json.Unmarshal(raw, &args); err != nil {
+				return nil, err
+			}
+			if args.ID == 0 {
+				t.Fatal("probe monitor used unscoped host callback")
+			}
 			switch method {
-			case "network.monitor.start": return json.RawMessage(`{"started":true}`), nil
-			case "network.monitor.poll": return json.RawMessage(`{"interfaceName":"wlan0","interfaceIndex":5}`), nil
-			case "network.monitor.stop": stopped = args.ID; return json.RawMessage(`{"stopped":true}`), nil
+			case "network.monitor.start":
+				return json.RawMessage(`{"started":true}`), nil
+			case "network.monitor.poll":
+				return json.RawMessage(`{"interfaceName":"wlan0","interfaceIndex":5}`), nil
+			case "network.monitor.stop":
+				stopped = args.ID
+				return json.RawMessage(`{"stopped":true}`), nil
 			}
 			return nil, errors.New("unexpected method")
 		}},
 		monitors: make(map[libbox.InterfaceUpdateListener]candidateMonitor),
 	}
 	listener := &candidateTestListener{}
-	if err := platform.StartDefaultInterfaceMonitor(listener); err != nil { t.Fatal(err) }
-	if listener.index != 5 { t.Fatal("candidate default interface was not initialized synchronously") }
-	if err := platform.CloseDefaultInterfaceMonitor(listener); err != nil { t.Fatal(err) }
-	if stopped == 0 { t.Fatal("candidate host monitor was leaked") }
+	if err := platform.StartDefaultInterfaceMonitor(listener); err != nil {
+		t.Fatal(err)
+	}
+	if listener.index != 5 {
+		t.Fatal("candidate default interface was not initialized synchronously")
+	}
+	if err := platform.CloseDefaultInterfaceMonitor(listener); err != nil {
+		t.Fatal(err)
+	}
+	if stopped == 0 {
+		t.Fatal("candidate host monitor was leaked")
+	}
 }
 
-type candidateTestListener struct { index int32 }
+type candidateTestListener struct{ index int32 }
 
-func (l *candidateTestListener) UpdateDefaultInterface(_ string, index int32, _, _ bool) { l.index = index }
+func (l *candidateTestListener) UpdateDefaultInterface(_ string, index int32, _, _ bool) {
+	l.index = index
+}
 func (*candidateTestListener) UpdateNetworkPath(string) {}

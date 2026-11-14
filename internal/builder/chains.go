@@ -9,7 +9,9 @@ func emitChain(source SourceInput, state *buildState) (map[string]any, bool) {
 		return nil, false
 	}
 	tag := stringValue(raw, "tag")
-	if tag == "" { tag = source.Name }
+	if tag == "" {
+		tag = source.Name
+	}
 	if tag == "" {
 		state.fatal("chain_tag_missing", "sources."+source.ID, "chain tag is missing")
 		return nil, false
@@ -40,7 +42,9 @@ func emitChain(source SourceInput, state *buildState) (map[string]any, bool) {
 			invalid = true
 		}
 	}
-	if invalid { return nil, false }
+	if invalid {
+		return nil, false
+	}
 	hops, _ := raw["hops"].([]any)
 	if len(hops) < 2 {
 		state.fatal("chain_positions_invalid", "sources."+source.ID+".hops", "chain requires at least two positions")
@@ -64,7 +68,9 @@ func emitChain(source SourceInput, state *buildState) (map[string]any, bool) {
 	}
 	body := map[string]any{"type": "chain", "tag": allocate(tag, state), "outbounds": resolved}
 	for key, value := range settings {
-		if key != "type" { body[key] = clone(value) }
+		if key != "type" {
+			body[key] = clone(value)
+		}
 	}
 	state.root[tag] = body["tag"].(string)
 	return body, true

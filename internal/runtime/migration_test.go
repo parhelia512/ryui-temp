@@ -40,7 +40,7 @@ func TestMigrationOptionsUseEmbeddedTemplateAndParsedLegacyNodeFacts(t *testing.
 			map[string]any{
 				"type": "user", "id": "local", "enabled": true,
 				"tag_prefix": "Home",
-				"raw_body": `{"outbounds":[{"type":"socks","tag":"proxy-a","server":"127.0.0.1","server_port":1080}]}`,
+				"raw_body":   `{"outbounds":[{"type":"socks","tag":"proxy-a","server":"127.0.0.1","server_port":1080}]}`,
 			},
 			map[string]any{"type": "subscription", "id": "sub-1", "url": "https://offline.invalid/sub"},
 		},
@@ -78,9 +78,9 @@ func TestMigrationOptionsUseEmbeddedTemplateAndParsedLegacyNodeFacts(t *testing.
 func TestMigrationDispatchRunsMutationAndSurfacesReadOnlyGuard(t *testing.T) {
 	a := migrationTestApplication(t, map[string]any{
 		"server_lists": []any{map[string]any{
-				"type": "user", "id": "manual", "name": "manual", "enabled": true,
-				"raw_body": `{"outbounds":[{"type":"socks","tag":"local","server":"127.0.0.1","server_port":1080}]}`,
-			}},
+			"type": "user", "id": "manual", "name": "manual", "enabled": true,
+			"raw_body": `{"outbounds":[{"type":"socks","tag":"local","server":"127.0.0.1","server_port":1080}]}`,
+		}},
 	}, nil)
 	beforeGeneration, beforeRevision := a.generation, a.revision
 	value, err := a.migrationDispatch(context.Background(), "storage.migrate", json.RawMessage(`{}`))
@@ -153,7 +153,7 @@ func TestApplyNativeSettingsUsesHostShapeAndOmitsDefaults(t *testing.T) {
 	}
 	want := map[string]any{
 		"native_prefs": map[string]any{"auto_start": true, "background_mode": "lazy", "app_theme_mode": "dark"},
-		"vars": map[string]any{"appfunctions_enabled": true, "automation_receive_enabled": false, "wizard_battery_v1": "asked"},
+		"vars":         map[string]any{"appfunctions_enabled": true, "automation_receive_enabled": false, "wizard_battery_v1": "asked"},
 	}
 	if !reflect.DeepEqual(gotArgs, want) {
 		t.Fatalf("nativeprefs.apply payload = %#v, want %#v", gotArgs, want)

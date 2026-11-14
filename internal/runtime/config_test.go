@@ -40,8 +40,8 @@ func configTestApplication(t *testing.T, sources []any) *Application {
 func configTestServer(raw string) map[string]any {
 	return map[string]any{
 		"kind": "server", "id": "manual", "enabled": true,
-		"origin": map[string]any{"kind": "singbox", "raw": raw, "future_origin": "keep"},
-		"body": map[string]any{"type": "socks", "tag": "stale", "server": "stale.example", "server_port": 1},
+		"origin":        map[string]any{"kind": "singbox", "raw": raw, "future_origin": "keep"},
+		"body":          map[string]any{"type": "socks", "tag": "stale", "server": "stale.example", "server_port": 1},
 		"future_record": map[string]any{"keep": true},
 	}
 }
@@ -209,9 +209,14 @@ func TestConfigSubscriptionUsesSharedDisabledNodeOverlay(t *testing.T) {
 	if err := a.store.WriteCache(url, []byte("ss://YWVzLTI1Ni1nY206cGFzcw==@cached.example:443#cached"), nil); err != nil {
 		t.Fatal(err)
 	}
-	snapshot,err:=a.snapshotConfigBuild(context.Background());if err!=nil{t.Fatal(err)}
-	input,diagnostics,err:=prepareConfigBuild(context.Background(),snapshot)
-	if err!=nil||len(input.Sources[0].Nodes)!=0{t.Fatalf("disabled-only source should prepare as empty: %#v %v %+v",input.Sources,err,diagnostics)}
+	snapshot, err := a.snapshotConfigBuild(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, diagnostics, err := prepareConfigBuild(context.Background(), snapshot)
+	if err != nil || len(input.Sources[0].Nodes) != 0 {
+		t.Fatalf("disabled-only source should prepare as empty: %#v %v %+v", input.Sources, err, diagnostics)
+	}
 	if _, err := os.Stat(a.configPath()); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("offline preparation wrote config: %v", err)
 	}
@@ -225,7 +230,7 @@ func TestConfigPreparationLeavesChainAndAutoForBuilder(t *testing.T) {
 	auto := map[string]any{
 		"kind": "auto", "tag": "pool", "future_group": true,
 		"origin": map[string]any{"raw": "intentionally not a parseable server"},
-		"body": map[string]any{"type": "urltest", "outbounds": []any{"hop"}, "interval": "5m"},
+		"body":   map[string]any{"type": "urltest", "outbounds": []any{"hop"}, "interval": "5m"},
 	}
 	a := configTestApplication(t, []any{chain, map[string]any{
 		"kind": "folder", "id": "folder", "nodes": []any{auto, chain},

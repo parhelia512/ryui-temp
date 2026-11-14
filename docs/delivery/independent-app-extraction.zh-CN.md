@@ -76,15 +76,19 @@ common/jni/jni_android.c: JNI_OnLoad -> box_jni_onload
 
 ## 本地验证限制
 
-本次只执行 Python AST、tree-sitter、YAML/JSON/XML 和 source-only 静态检查；未运行：
+本次在独立 app 仓库上执行了 Python-only 静态检查：
 
-- Go、gofmt、staticcheck
+- `D:\\go\\bin\\gofmt.exe -w` 格式化 102 个 app Go 文件，随后 `gofmt -d` 退出码为 0。
+- Python AST、YAML、JSON、XML、Go/Kotlin tree-sitter 静态解析无语法错误。
+- 独立布局 source-only migration 检查通过；外部 RyUI 和四个 fork 在本机未 checkout，属于预期 warning。
+
+仍未运行：
+
+- Go 编译、Go 测试、Go vet
 - Gradle、NDK、Android SDK build
 - Git 提交/推送
 - GitHub Actions
 - Android 设备或模拟器
-
-source-only 检查、Python 脚本语法检查和独立布局检查通过。缺少外部 checkout 的提示是预期结果，实际 checkout 只在 Actions 中执行。
 
 ## 运行 Actions
 

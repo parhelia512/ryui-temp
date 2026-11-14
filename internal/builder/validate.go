@@ -2,9 +2,71 @@ package builder
 
 import "fmt"
 
-func validateConfig(config map[string]any,state *buildState){
-	tags:=map[string]bool{}
-	for _,key:=range []string{"outbounds","endpoints"}{items,_:=config[key].([]any);for index,raw:=range items{entry,ok:=raw.(map[string]any);if !ok{state.fatal("entry_invalid",fmt.Sprintf("%s[%d]",key,index),"config entry is not an object");continue};tag:=stringValue(entry,"tag");if tag==""{state.fatal("entry_tag_missing",fmt.Sprintf("%s[%d].tag",key,index),"config entry has no tag");continue};if tags[tag]{state.fatal("entry_tag_duplicate",fmt.Sprintf("%s[%d].tag",key,index),"duplicate outbound or endpoint tag "+tag)};tags[tag]=true}}
-	if route,ok:=config["route"].(map[string]any);ok{if final:=stringValue(route,"final");final!=""&&!tags[final]{state.fatal("route_final_dangling","route.final","route final does not reference an outbound: "+final)};rules,_:=route["rules"].([]any);for index,raw:=range rules{rule,ok:=raw.(map[string]any);if !ok{state.fatal("route_rule_invalid",fmt.Sprintf("route.rules[%d]",index),"route rule is not an object");continue};if outbound:=stringValue(rule,"outbound");outbound!=""&&!tags[outbound]{state.fatal("route_rule_outbound_dangling",fmt.Sprintf("route.rules[%d].outbound",index),"route rule references missing outbound "+outbound)}}}
-	if dns,ok:=config["dns"].(map[string]any);ok{servers,_:=dns["servers"].([]any);known:=map[string]bool{};for index,raw:=range servers{server,ok:=raw.(map[string]any);if !ok{state.fatal("dns_server_invalid",fmt.Sprintf("dns.servers[%d]",index),"DNS server is not an object");continue};tag:=stringValue(server,"tag");if tag==""{state.fatal("dns_server_tag_missing",fmt.Sprintf("dns.servers[%d].tag",index),"DNS server has no tag");continue};if known[tag]{state.fatal("dns_server_tag_duplicate",fmt.Sprintf("dns.servers[%d].tag",index),"duplicate DNS server tag "+tag)};known[tag]=true};if final:=stringValue(dns,"final");final!=""&&!known[final]{state.fatal("dns_final_dangling","dns.final","DNS final references missing server "+final)};if route,ok:=config["route"].(map[string]any);ok{resolver,_:=route["default_domain_resolver"].(map[string]any);tag:=stringValue(resolver,"server");if tag!=""&&!known[tag]{state.fatal("dns_resolver_dangling","route.default_domain_resolver.server","default domain resolver references missing DNS server "+tag)}}}
+func validateConfig(config map[string]any, state *buildState) {
+	tags := map[string]bool{}
+	for _, key := range []string{"outbounds", "endpoints"} {
+		items, _ := config[key].([]any)
+		for index, raw := range items {
+			entry, ok := raw.(map[string]any)
+			if !ok {
+				state.fatal("entry_invalid", fmt.Sprintf("%s[%d]", key, index), "config entry is not an object")
+				continue
+			}
+			tag := stringValue(entry, "tag")
+			if tag == "" {
+				state.fatal("entry_tag_missing", fmt.Sprintf("%s[%d].tag", key, index), "config entry has no tag")
+				continue
+			}
+			if tags[tag] {
+				state.fatal("entry_tag_duplicate", fmt.Sprintf("%s[%d].tag", key, index), "duplicate outbound or endpoint tag "+tag)
+			}
+			tags[tag] = true
+		}
+	}
+	if route, ok := config["route"].(map[string]any); ok {
+		if final := stringValue(route, "final"); final != "" && !tags[final] {
+			state.fatal("route_final_dangling", "route.final", "route final does not reference an outbound: "+final)
+		}
+		rules, _ := route["rules"].([]any)
+		for index, raw := range rules {
+			rule, ok := raw.(map[string]any)
+			if !ok {
+				state.fatal("route_rule_invalid", fmt.Sprintf("route.rules[%d]", index), "route rule is not an object")
+				continue
+			}
+			if outbound := stringValue(rule, "outbound"); outbound != "" && !tags[outbound] {
+				state.fatal("route_rule_outbound_dangling", fmt.Sprintf("route.rules[%d].outbound", index), "route rule references missing outbound "+outbound)
+			}
+		}
+	}
+	if dns, ok := config["dns"].(map[string]any); ok {
+		servers, _ := dns["servers"].([]any)
+		known := map[string]bool{}
+		for index, raw := range servers {
+			server, ok := raw.(map[string]any)
+			if !ok {
+				state.fatal("dns_server_invalid", fmt.Sprintf("dns.servers[%d]", index), "DNS server is not an object")
+				continue
+			}
+			tag := stringValue(server, "tag")
+			if tag == "" {
+				state.fatal("dns_server_tag_missing", fmt.Sprintf("dns.servers[%d].tag", index), "DNS server has no tag")
+				continue
+			}
+			if known[tag] {
+				state.fatal("dns_server_tag_duplicate", fmt.Sprintf("dns.servers[%d].tag", index), "duplicate DNS server tag "+tag)
+			}
+			known[tag] = true
+		}
+		if final := stringValue(dns, "final"); final != "" && !known[final] {
+			state.fatal("dns_final_dangling", "dns.final", "DNS final references missing server "+final)
+		}
+		if route, ok := config["route"].(map[string]any); ok {
+			resolver, _ := route["default_domain_resolver"].(map[string]any)
+			tag := stringValue(resolver, "server")
+			if tag != "" && !known[tag] {
+				state.fatal("dns_resolver_dangling", "route.default_domain_resolver.server", "default domain resolver references missing DNS server "+tag)
+			}
+		}
+	}
 }

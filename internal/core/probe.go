@@ -160,7 +160,9 @@ func decodeProbeCandidate(args json.RawMessage) (probeCandidateInput, error) {
 		}
 	}
 	if raw := candidate["log"]; len(raw) != 0 && string(raw) != "null" {
-		var logOptions struct{ Output string `json:"output"` }
+		var logOptions struct {
+			Output string `json:"output"`
+		}
 		if err := json.Unmarshal(raw, &logOptions); err != nil || logOptions.Output != "" {
 			return probeCandidateInput{}, errors.New("candidate config must not write a log file")
 		}
@@ -268,12 +270,14 @@ func (*candidateProbePlatform) OpenTun(libbox.TunOptions) (int32, error) {
 	return -1, errors.New("candidate probes cannot open a TUN device")
 }
 func (*candidateProbePlatform) SendNotification(*libbox.Notification) error { return nil }
-func (*candidateProbePlatform) CancelNotification(string, int32) error     { return nil }
+func (*candidateProbePlatform) CancelNotification(string, int32) error      { return nil }
 
 type candidateProbeHandler struct{ cancel context.CancelFunc }
 
 func (h *candidateProbeHandler) ServiceStop() error { h.cancel(); return nil }
-func (*candidateProbeHandler) ServiceReload() error { return errors.New("candidate probe cannot reload") }
+func (*candidateProbeHandler) ServiceReload() error {
+	return errors.New("candidate probe cannot reload")
+}
 func (*candidateProbeHandler) GetSystemProxyStatus() (*libbox.SystemProxyStatus, error) {
 	return &libbox.SystemProxyStatus{}, nil
 }

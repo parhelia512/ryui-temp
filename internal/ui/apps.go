@@ -16,18 +16,28 @@ func (s *session) appPicker() ryui.Node {
 	system := signal.New(false)
 	mode := signal.New("off")
 	config := object{}
-	loadApps := func() { q.run("platform.call", object{"method": "apps.list", "args": object{}}, func(r reply) { apps.Set(listOf(r.value, "apps", "items")) }) }
+	loadApps := func() {
+		q.run("platform.call", object{"method": "apps.list", "args": object{}}, func(r reply) { apps.Set(listOf(r.value, "apps", "items")) })
+	}
 	q.run("settings.get", nil, func(r reply) {
 		config = asObject(asObject(r.value)["tun_apps"])
-		if v := text(config["mode"]); v != "" { mode.Set(v) }
+		if v := text(config["mode"]); v != "" {
+			mode.Set(v)
+		}
 		values := map[string]bool{}
-		for _, value := range listOf(config, "packages") { values[text(value)] = true }
+		for _, value := range listOf(config, "packages") {
+			values[text(value)] = true
+		}
 		selected.Set(values)
 		loadApps()
 	})
 	save := func() {
 		packages := []string{}
-		for name, on := range selected.Peek() { if on { packages = append(packages, name) } }
+		for name, on := range selected.Peek() {
+			if on {
+				packages = append(packages, name)
+			}
+		}
 		sort.Strings(packages)
 		config["mode"], config["packages"] = mode.Peek(), packages
 		q.run("settings.save", object{"tun_apps": config}, nil)
@@ -37,14 +47,18 @@ func (s *session) appPicker() ryui.Node {
 		field("Search apps", query, false),
 		ryui.Row(ryui.Style{Gap: 10, Align: ryui.AlignCenter}, ryui.StaticText(tr("Show system apps")), ryui.Toggle(ryui.ToggleProps{Value: system})),
 		actions(primary("Save", save, q.busy), button("Refresh", loadApps, q.busy), button("Clear selection", func() { selected.Set(map[string]bool{}) }, q.busy)),
-		ryui.Text(signal.Func(func() string { return tr("Selected")+": "+text(len(selected.Get())) }), ryui.Style{Font: ryui.Footnote}), q.feedback(),
+		ryui.Text(signal.Func(func() string { return tr("Selected") + ": " + text(len(selected.Get())) }), ryui.Style{Font: ryui.Footnote}), q.feedback(),
 		ryui.List(ryui.ListProps{}, signal.Func(func() []any {
 			var items []any
 			search := strings.ToLower(query.Get())
 			for _, value := range apps.Get() {
 				item := asObject(value)
-				if !system.Get() && item["system"] == true && !selected.Get()[text(item["packageName"])] { continue }
-				if search != "" && !strings.Contains(strings.ToLower(text(item["label"])+" "+text(item["packageName"])), search) { continue }
+				if !system.Get() && item["system"] == true && !selected.Get()[text(item["packageName"])] {
+					continue
+				}
+				if search != "" && !strings.Contains(strings.ToLower(text(item["label"])+" "+text(item["packageName"])), search) {
+					continue
+				}
 				items = append(items, value)
 			}
 			return items
@@ -53,11 +67,24 @@ func (s *session) appPicker() ryui.Node {
 				pkg := text(asObject(item.Get())["packageName"])
 				selected.Update(func(old map[string]bool) map[string]bool {
 					next := map[string]bool{}
-					for k,v := range old { next[k] = v }
-					if next[pkg] { delete(next,pkg) } else { next[pkg] = true }
+					for k, v := range old {
+						next[k] = v
+					}
+					if next[pkg] {
+						delete(next, pkg)
+					} else {
+						next[pkg] = true
+					}
 					return next
 				})
-			}}, ryui.Text(signal.Func(func() string { v:=asObject(item.Get()); prefix:=""; if selected.Get()[text(v["packageName"])] { prefix = "[x] " }; return prefix+text(v["label"]) }), ryui.Style{Font: ryui.Headline}),
-				ryui.Text(signal.Func(func() string { v:=asObject(item.Get()); return text(v["packageName"])+" · UID "+text(v["uid"]) }), ryui.Style{Font: ryui.Footnote, Color: ryui.SecondaryLabel}))
+			}}, ryui.Text(signal.Func(func() string {
+				v := asObject(item.Get())
+				prefix := ""
+				if selected.Get()[text(v["packageName"])] {
+					prefix = "[x] "
+				}
+				return prefix + text(v["label"])
+			}), ryui.Style{Font: ryui.Headline}),
+				ryui.Text(signal.Func(func() string { v := asObject(item.Get()); return text(v["packageName"]) + " · UID " + text(v["uid"]) }), ryui.Style{Font: ryui.Footnote, Color: ryui.SecondaryLabel}))
 		}))
 }

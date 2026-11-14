@@ -502,7 +502,9 @@ func dnsRecordExpandPresetBody(preset map[string]any, vars map[string]any, node 
 				var local map[string]any
 				if err := json.Unmarshal(payload, &local); err == nil && local != nil {
 					local["type"], local["tag"] = "local", tag
-					if local["format"] == nil { local["format"] = "binary" }
+					if local["format"] == nil {
+						local["format"] = "binary"
+					}
 					item = local
 				} else {
 					state.fatal("preset_ruleset_cache_invalid", "cache.rule_sets."+tag, err.Error())
@@ -874,4 +876,3 @@ func recordStringList(value any) []string {
 	}
 	return result
 }
-

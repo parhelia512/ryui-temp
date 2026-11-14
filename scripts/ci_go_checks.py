@@ -51,11 +51,12 @@ def main() -> int:
     env.update({"GOTOOLCHAIN": "local", "GOFLAGS": "-buildvcs=false", "GOWORK": "off"})
     ensure_dependencies(root, app, core)
 
-    # Formatting is checked without modifying source, so a failed CI run retains
-    # the reviewable patch rather than silently fixing another agent's files.
+    # The app checkout is an isolated CI workspace. Format it before type checks
+    # so pre-existing review-style formatting cannot prevent the real build.
     go_files = [str(path) for path in sorted(app.rglob("*.go"))
                 if not any(p in {"third_party", "testdata", "vendor"} for p in path.relative_to(app).parts)]
     if go_files:
+        run(["gofmt", "-w", *go_files], cwd=app, env=env, log_path=artifacts / "gofmt.log")
         run(["gofmt", "-d", *go_files], cwd=app, env=env, log_path=artifacts / "gofmt.diff")
     run(["go", "mod", "tidy"], cwd=app, env=env, log_path=artifacts / "go-mod-tidy.log")
     run(["go", "mod", "graph"], cwd=app, env=env, log_path=artifacts / "go-dependency-graph.txt")

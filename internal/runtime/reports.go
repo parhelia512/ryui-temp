@@ -36,9 +36,9 @@ const (
 )
 
 var (
-	pprofCaptureGate = make(chan struct{}, 1)
-	shareBearerRE    = regexp.MustCompile(`(?i)(bearer\s+)[a-z0-9._~+/-]+=*`)
-	shareURLAuthRE   = regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*://)[^/@\s:]+:[^/@\s]+@`)
+	pprofCaptureGate   = make(chan struct{}, 1)
+	shareBearerRE      = regexp.MustCompile(`(?i)(bearer\s+)[a-z0-9._~+/-]+=*`)
+	shareURLAuthRE     = regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*://)[^/@\s:]+:[^/@\s]+@`)
 	shareQuerySecretRE = regexp.MustCompile(`(?i)([?&](?:access[_-]?token|api[_-]?key|auth|key|password|secret|token)=)[^&#\s]+`)
 )
 
@@ -220,8 +220,8 @@ func (a *Application) listReports(ctx context.Context) ([]map[string]any, error)
 			}
 			records = append(records, reportRecord{
 				ID: archive.kind + ":" + entry.Name(), Kind: archive.kind,
-					Name: entry.Name(), Path: dir, Dir: dir, MTime: newest,
-					Size: size, Files: files, Metadata: meta,
+				Name: entry.Name(), Path: dir, Dir: dir, MTime: newest,
+				Size: size, Files: files, Metadata: meta,
 			})
 		}
 	}
@@ -276,7 +276,6 @@ func (a *Application) readReport(ctx context.Context, id, file string) (any, err
 		"encoding": encoding, "data": data,
 	}, nil
 }
-
 
 func (a *Application) shareReport(ctx context.Context, id string) (any, error) {
 	if id == "" {
@@ -773,4 +772,3 @@ func capturePprof(ctx context.Context, profile string, durationMS, durationSecon
 		"content_type": "application/octet-stream", "data": base64.StdEncoding.EncodeToString(buffer.Bytes()),
 	}, nil
 }
-

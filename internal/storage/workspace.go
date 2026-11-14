@@ -477,7 +477,9 @@ func (s *Store) reloadDocumentLocked() error {
 	s.readOnly = false
 	s.migration = cloneMigrationReport(report)
 	if report.Migrated {
-		if err := s.writeDocumentLocked(migrated); err != nil { return err }
+		if err := s.writeDocumentLocked(migrated); err != nil {
+			return err
+		}
 	}
 	return nil
 }

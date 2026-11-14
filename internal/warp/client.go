@@ -16,44 +16,493 @@ import (
 const apiVersion = "v0a2158"
 const clientVersion = "a-7.21-0721"
 const userAgent = "okhttp/3.12.1"
-var fallbackAPIHosts=[]string{"https://api.devices.cloudflare.com","https://api.cloudflareclient.com"}
 
-type HTTPDoer interface{Do(*http.Request)(*http.Response,error)}
-type ScanProbeFunc func(context.Context,map[string]any)(map[string]any,error)
-type Options struct{HTTP HTTPDoer;APIHosts []string;EndpointJSON []byte;Region string;Timeout time.Duration;ScanProbe ScanProbeFunc;ScanConcurrency int}
-type Client struct{http HTTPDoer;apiHosts []string;picker *EndpointPicker;scanProbe ScanProbeFunc;scanConcurrency int}
-func NewClient(opts Options)*Client{h:=opts.HTTP;if h==nil{h=&http.Client{Timeout:opts.timeout(),Transport:&http.Transport{TLSClientConfig:&tls.Config{MinVersion:tls.VersionTLS12}}}};hosts:=append([]string{},opts.APIHosts...);for i:=range hosts{hosts[i]=strings.TrimRight(strings.TrimSpace(hosts[i]),"/")};c:=&Client{http:h,apiHosts:hosts,scanProbe:opts.ScanProbe,scanConcurrency:opts.ScanConcurrency};if len(opts.EndpointJSON)>0{if p,e:=NewEndpointPicker(opts.EndpointJSON,opts.Region,nil);e==nil{c.picker=p;if len(c.apiHosts)==0{c.apiHosts=append([]string{},p.Pool.APIHosts...)}}};return c}
-func(o Options)timeout()time.Duration{if o.Timeout>0{return o.Timeout};return 5*time.Second}
+var fallbackAPIHosts = []string{"https://api.devices.cloudflare.com", "https://api.cloudflareclient.com"}
+
+type HTTPDoer interface {
+	Do(*http.Request) (*http.Response, error)
+}
+type ScanProbeFunc func(context.Context, map[string]any) (map[string]any, error)
+type Options struct {
+	HTTP            HTTPDoer
+	APIHosts        []string
+	EndpointJSON    []byte
+	Region          string
+	Timeout         time.Duration
+	ScanProbe       ScanProbeFunc
+	ScanConcurrency int
+}
+type Client struct {
+	http            HTTPDoer
+	apiHosts        []string
+	picker          *EndpointPicker
+	scanProbe       ScanProbeFunc
+	scanConcurrency int
+}
+
+func NewClient(opts Options) *Client {
+	h := opts.HTTP
+	if h == nil {
+		h = &http.Client{Timeout: opts.timeout(), Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}}}
+	}
+	hosts := append([]string{}, opts.APIHosts...)
+	for i := range hosts {
+		hosts[i] = strings.TrimRight(strings.TrimSpace(hosts[i]), "/")
+	}
+	c := &Client{http: h, apiHosts: hosts, scanProbe: opts.ScanProbe, scanConcurrency: opts.ScanConcurrency}
+	if len(opts.EndpointJSON) > 0 {
+		if p, e := NewEndpointPicker(opts.EndpointJSON, opts.Region, nil); e == nil {
+			c.picker = p
+			if len(c.apiHosts) == 0 {
+				c.apiHosts = append([]string{}, p.Pool.APIHosts...)
+			}
+		}
+	}
+	return c
+}
+func (o Options) timeout() time.Duration {
+	if o.Timeout > 0 {
+		return o.Timeout
+	}
+	return 5 * time.Second
+}
 
 // Dispatch is the stable runtime boundary. NewClient performs no network I/O.
-func(c *Client)Dispatch(ctx context.Context,method string,args map[string]any)(any,error){if args==nil{args=map[string]any{}};switch strings.ToLower(method){case "warp.register","register":return c.dispatchRegister(ctx,args,false);case "warp.register.masque","register.masque","warp.register_masque":return c.dispatchRegister(ctx,args,true);case "warp.account.from_json":m,e:=accountMap(args);if e!=nil{return nil,e};a,e:=WarpAccountFromMap(m);if e!=nil{return nil,e};return a.ToMap(),nil;case "warp.masque.from_json":m,e:=accountMap(args);if e!=nil{return nil,e};a,e:=MasqueAccountFromMap(m);if e!=nil{return nil,e};return a.ToMap(),nil;case "warp.account.uri":a,e:=accountArg(args);if e!=nil{return nil,e};return map[string]any{"uri":a.URI(boolArg(args,"include_reserved",true),intArg(args,"keepalive",0))},nil;case "warp.account.conf":a,e:=accountArg(args);if e!=nil{return nil,e};return map[string]any{"config":a.Conf(boolArg(args,"include_reserved",true),intArg(args,"keepalive",0))},nil;case "warp.masque.uri":a,e:=masqueArg(args);if e!=nil{return nil,e};return map[string]any{"uri":a.URI(stringArg(args,"vhttp","h3"))},nil;case "warp.endpoint.random":if c.picker==nil{return nil,fmt.Errorf("warp endpoint asset unavailable")};return map[string]any{"endpoint":c.picker.RandomEndpoint(boolArg(args,"allow_v6",false)),"sni":c.picker.RandomSNI()},nil;case "warp.masque.endpoint.random":if c.picker==nil{return nil,fmt.Errorf("warp endpoint asset unavailable")};n:=stringArg(args,"network","h3");return map[string]any{"host":c.picker.RandomMasqueIP(n),"port":c.picker.RandomMasquePort(n),"sni":c.picker.RandomMasqueSNI()},nil;case "warp.scan.generate","warp.scan.candidates":return c.generateCandidates(args);case "warp.scan.run":return c.runScan(ctx,args);case "warp.redact":if m,ok:=args["account"].(map[string]any);ok{if a,e:=WarpAccountFromMap(m);e==nil{return a.RedactedMap(),nil};if a,e:=MasqueAccountFromMap(m);e==nil{return a.RedactedMap(),nil}};return RedactMap(args),nil;default:return nil,fmt.Errorf("warp: unknown method %q",method)}}
-func(c *Client)generateCandidates(args map[string]any)(any,error){if c.picker==nil{return nil,fmt.Errorf("warp endpoint asset unavailable")};cs:=c.picker.GenerateCandidates(intArg(args,"count",100),boolArg(args,"allow_v6",false),floatArg(args,"empirical_port_ratio",0.3));return candidatesMap(cs),nil}
-func(c *Client)runScan(ctx context.Context,args map[string]any)(any,error){if c.picker==nil{return nil,fmt.Errorf("warp endpoint asset unavailable")};if c.scanProbe==nil{return nil,fmt.Errorf("warp scan callback unavailable")};cs:=c.picker.GenerateCandidates(intArg(args,"count",100),boolArg(args,"allow_v6",false),floatArg(args,"empirical_port_ratio",0.3));results:=make([]any,len(cs));workers:=c.scanConcurrency;if workers<1{workers=1};if workers>len(cs){workers=len(cs)};if workers==0{return map[string]any{"candidates":results},nil};jobs:=make(chan int);var wg sync.WaitGroup;var mu sync.Mutex;wg.Add(workers);for i:=0;i<workers;i++{go func(){defer wg.Done();for n:=range jobs{if ctx.Err()!=nil{return};a:=map[string]any{"candidate":map[string]any{"ip":cs[n].IP,"port":cs[n].Port,"protocol":cs[n].Protocol,"sni":cs[n].SNI,"awg":cs[n].AWG},"endpoint":cs[n].Endpoint(),"title":cs[n].NodeTitle()};r,e:=c.scanProbe(ctx,a);if e!=nil{a["error"]=e.Error()}else{a["result"]=r};mu.Lock();results[n]=a;mu.Unlock()}}()};sendLoop:for i:=range cs{select{case jobs<-i:case <-ctx.Done():break sendLoop}};close(jobs);wg.Wait();if e:=ctx.Err();e!=nil{return map[string]any{"candidates":results,"cancelled":true},e};return map[string]any{"candidates":results},nil}
-func candidatesMap(cs []Candidate)map[string]any{out:=make([]map[string]any,0,len(cs));for _,x:=range cs{out=append(out,map[string]any{"ip":x.IP,"port":x.Port,"protocol":x.Protocol,"sni":x.SNI,"endpoint":x.Endpoint(),"title":x.NodeTitle(),"awg":x.AWG})};return map[string]any{"candidates":out}}
-func(c *Client)dispatchRegister(ctx context.Context,args map[string]any,masque bool)(any,error){now:=stringArg(args,"now",stringArg(args,"created_at",time.Now().UTC().Format(time.RFC3339)));if masque{a,e:=c.RegisterMasque(ctx,now,stringArg(args,"sni",""),stringArg(args,"idle_timeout",""),stringArg(args,"keep_alive",""));if e!=nil{return nil,e};return a.ToMap(),nil};endpoint:=stringArg(args,"endpoint","");obf:=boolArg(args,"obfuscate",false);if obf&&endpoint==""&&boolArg(args,"random_endpoint",false)&&c.picker!=nil{endpoint=c.picker.RandomEndpoint(boolArg(args,"allow_v6",false))};a,e:=c.Register(ctx,RegisterArgs{License:stringArg(args,"license",""),Endpoint:endpoint,Now:now,Obfuscate:obf,Quic:QuicParams{SNI:stringArg(args,"sni",""),IP:stringArg(args,"ip","quic"),IB:stringArg(args,"ib","chrome"),JC:intArg(args,"jc",4),JMin:intArg(args,"jmin",40),JMax:intArg(args,"jmax",70)}});if e!=nil{return nil,e};return a.ToMap(),nil}
-type RegisterArgs struct{License,Endpoint,Now string;Obfuscate bool;Quic QuicParams}
-func(c *Client)Register(ctx context.Context,in RegisterArgs)(WarpAccount,error){priv,pub,e:=GenerateWireGuardKeypair();if e!=nil{return WarpAccount{},e};body:=map[string]any{"key":pub,"install_id":"","fcm_token":"","tos":in.Now,"model":"PC","type":"Android","locale":"en_US"};resp,host,err:=c.postReg(ctx,body);if err!=nil{return WarpAccount{},err};defer resp.Body.Close();if resp.StatusCode!=http.StatusOK{return WarpAccount{},fmt.Errorf("registration failed: HTTP %d",resp.StatusCode)};var raw map[string]any;if err=json.NewDecoder(resp.Body).Decode(&raw);err!=nil{return WarpAccount{},err};a,err:=parseWarp(raw,priv,in.Endpoint,in.Now);if err!=nil{return WarpAccount{},err};if strings.TrimSpace(in.License)!=""{a.License=in.License;plus,licenseErr:=c.license(ctx,host,a,in.License);a.WarpPlus=plus;if licenseErr!=nil{a.LicenseError=licenseErr.Error()}};if in.Obfuscate{a.AWG=BuildAmneziaAWG(in.Quic)};return a,nil}
-func(c *Client)RegisterMasque(ctx context.Context,now,sni,idle,keep string)(MasqueAccount,error){keys,e:=GenerateMasqueKeys();if e!=nil{return MasqueAccount{},e};_,pub,e:=GenerateWireGuardKeypair();if e!=nil{return MasqueAccount{},e};r,host,e:=c.postReg(ctx,map[string]any{"key":pub,"install_id":"","fcm_token":"","tos":now,"model":"PC","type":"Android","locale":"en_US"});if e!=nil{return MasqueAccount{},e};defer r.Body.Close();if r.StatusCode!=http.StatusOK{return MasqueAccount{},fmt.Errorf("masque registration failed: HTTP %d",r.StatusCode)};var reg map[string]any;if e=json.NewDecoder(r.Body).Decode(&reg);e!=nil{return MasqueAccount{},e};device,token:=stringValue(reg["id"]),stringValue(reg["token"]);if device==""||token==""{return MasqueAccount{},fmt.Errorf("masque registration response: missing id/token")};pr,e:=c.doJSON(ctx,http.MethodPatch,c.endpoint(host,"/"+apiVersion+"/reg/"+device),map[string]any{"key":keys.PublicDER,"key_type":"secp256r1","tunnel_type":"masque"},token);if e!=nil{return MasqueAccount{},e};defer pr.Body.Close();if pr.StatusCode!=http.StatusOK{return MasqueAccount{},fmt.Errorf("masque enroll failed: HTTP %d",pr.StatusCode)};var raw map[string]any;if e=json.NewDecoder(pr.Body).Decode(&raw);e!=nil{return MasqueAccount{},e};return parseMasque(raw,keys.PrivateDER,device,token,now,sni,idle,keep)}
-func(c *Client)postReg(ctx context.Context,body map[string]any)(*http.Response,string,error){hosts:=c.apiHosts;if len(hosts)==0{hosts=fallbackAPIHosts};errs:=[]string{};for _,h:=range hosts{r,e:=c.doJSON(ctx,http.MethodPost,c.endpoint(h,"/"+apiVersion+"/reg"),body,"");if e==nil{return r,h,nil};errs=append(errs,h+": "+e.Error())};return nil,"",fmt.Errorf("WARP API unavailable: %s",strings.Join(errs,"; "))}
-func(c *Client)endpoint(host,path string)string{return strings.TrimRight(host,"/")+path}
-func(c *Client)doJSON(ctx context.Context,method,target string,body map[string]any,bearer string)(*http.Response,error){data,e:=json.Marshal(body);if e!=nil{return nil,e};req,e:=http.NewRequestWithContext(ctx,method,target,bytes.NewReader(data));if e!=nil{return nil,e};req.Header.Set("Content-Type","application/json");req.Header.Set("User-Agent",userAgent);req.Header.Set("CF-Client-Version",clientVersion);if bearer!=""{req.Header.Set("Authorization","Bearer "+bearer)};return c.http.Do(req)}
-func(c *Client)license(ctx context.Context,host string,a WarpAccount,license string)(bool,error){r,e:=c.doJSON(ctx,http.MethodPatch,c.endpoint(host,"/"+apiVersion+"/reg/"+a.DeviceID+"/account"),map[string]any{"license":license},a.Token);if e!=nil{return false,e};defer r.Body.Close();if r.StatusCode!=http.StatusOK{return false,fmt.Errorf("license apply failed: HTTP %d",r.StatusCode)};var m map[string]any;if e=json.NewDecoder(r.Body).Decode(&m);e!=nil{return false,fmt.Errorf("license response: %w",e)};if v,ok:=m["warp_plus"].(bool);ok{return v,nil};if x,ok:=m["account"].(map[string]any);ok{v,_:=x["warp_plus"].(bool);return v,nil};return false,fmt.Errorf("license response: missing warp_plus")}
-func parseWarp(m map[string]any,priv,endpoint,created string)(WarpAccount,error){cfg,_:=m["config"].(map[string]any);if cfg==nil{return WarpAccount{},fmt.Errorf("registration response: missing config")};peers,_:=cfg["peers"].([]any);pub,host:="",endpoint;if len(peers)>0{p,_:=peers[0].(map[string]any);pub=stringValue(p["public_key"]);if host==""{if ep,ok:=p["endpoint"].(map[string]any);ok{host=stringValue(ep["host"])}}};if host==""{host=DefaultEndpoint};iface,_:=cfg["interface"].(map[string]any);ad,_:=iface["addresses"].(map[string]any);v4,v6:=stringValue(ad["v4"]),stringValue(ad["v6"]);if pub==""||v4==""{return WarpAccount{},fmt.Errorf("registration response: missing peer or interface")};acc,_:=m["account"].(map[string]any);return WarpAccount{PrivateKey:priv,PeerPublic:pub,ClientV4:v4,ClientV6:v6,ClientID:stringValue(cfg["client_id"]),AccountID:stringValue(acc["id"]),DeviceID:stringValue(m["id"]),Token:stringValue(m["token"]),Endpoint:host,CreatedAt:created},nil}
-func parseMasque(m map[string]any,priv,device,token,created,sni,idle,keep string)(MasqueAccount,error){cfg,_:=m["config"].(map[string]any);if cfg==nil{return MasqueAccount{},fmt.Errorf("masque response: missing config")};iface,_:=cfg["interface"].(map[string]any);ad,_:=iface["addresses"].(map[string]any);v4,v6:=stringValue(ad["v4"]),stringValue(ad["v6"]);peers,_:=cfg["peers"].([]any);if (v4==""&&v6=="")||len(peers)==0{return MasqueAccount{},fmt.Errorf("masque response: missing interface or peer")};p,_:=peers[0].(map[string]any);pub,e:=NormalizeServerPublicKey(stringValue(p["public_key"]));if e!=nil{return MasqueAccount{},e};ep,_:=p["endpoint"].(map[string]any);server:=DefaultMasqueServer;port:=DefaultMasquePort;if x:=stringValue(ep["v4"]);x!=""{server=parseMasqueEndpointHost(x)};if ps,ok:=ep["ports"].([]any);ok&&len(ps)>0{if n:=intValue(ps[0]);n>0{port=n}};return MasqueAccount{PrivateKeyDER:priv,ServerPubDER:pub,ClientV4:v4,ClientV6:v6,Server:server,Port:port,DeviceID:device,Token:token,CreatedAt:created,SNI:sni,IdleTimeout:idle,KeepAlive:keep},nil}
+func (c *Client) Dispatch(ctx context.Context, method string, args map[string]any) (any, error) {
+	if args == nil {
+		args = map[string]any{}
+	}
+	switch strings.ToLower(method) {
+	case "warp.register", "register":
+		return c.dispatchRegister(ctx, args, false)
+	case "warp.register.masque", "register.masque", "warp.register_masque":
+		return c.dispatchRegister(ctx, args, true)
+	case "warp.account.from_json":
+		m, e := accountMap(args)
+		if e != nil {
+			return nil, e
+		}
+		a, e := WarpAccountFromMap(m)
+		if e != nil {
+			return nil, e
+		}
+		return a.ToMap(), nil
+	case "warp.masque.from_json":
+		m, e := accountMap(args)
+		if e != nil {
+			return nil, e
+		}
+		a, e := MasqueAccountFromMap(m)
+		if e != nil {
+			return nil, e
+		}
+		return a.ToMap(), nil
+	case "warp.account.uri":
+		a, e := accountArg(args)
+		if e != nil {
+			return nil, e
+		}
+		return map[string]any{"uri": a.URI(boolArg(args, "include_reserved", true), intArg(args, "keepalive", 0))}, nil
+	case "warp.account.conf":
+		a, e := accountArg(args)
+		if e != nil {
+			return nil, e
+		}
+		return map[string]any{"config": a.Conf(boolArg(args, "include_reserved", true), intArg(args, "keepalive", 0))}, nil
+	case "warp.masque.uri":
+		a, e := masqueArg(args)
+		if e != nil {
+			return nil, e
+		}
+		return map[string]any{"uri": a.URI(stringArg(args, "vhttp", "h3"))}, nil
+	case "warp.endpoint.random":
+		if c.picker == nil {
+			return nil, fmt.Errorf("warp endpoint asset unavailable")
+		}
+		return map[string]any{"endpoint": c.picker.RandomEndpoint(boolArg(args, "allow_v6", false)), "sni": c.picker.RandomSNI()}, nil
+	case "warp.masque.endpoint.random":
+		if c.picker == nil {
+			return nil, fmt.Errorf("warp endpoint asset unavailable")
+		}
+		n := stringArg(args, "network", "h3")
+		return map[string]any{"host": c.picker.RandomMasqueIP(n), "port": c.picker.RandomMasquePort(n), "sni": c.picker.RandomMasqueSNI()}, nil
+	case "warp.scan.generate", "warp.scan.candidates":
+		return c.generateCandidates(args)
+	case "warp.scan.run":
+		return c.runScan(ctx, args)
+	case "warp.redact":
+		if m, ok := args["account"].(map[string]any); ok {
+			if a, e := WarpAccountFromMap(m); e == nil {
+				return a.RedactedMap(), nil
+			}
+			if a, e := MasqueAccountFromMap(m); e == nil {
+				return a.RedactedMap(), nil
+			}
+		}
+		return RedactMap(args), nil
+	default:
+		return nil, fmt.Errorf("warp: unknown method %q", method)
+	}
+}
+func (c *Client) generateCandidates(args map[string]any) (any, error) {
+	if c.picker == nil {
+		return nil, fmt.Errorf("warp endpoint asset unavailable")
+	}
+	cs := c.picker.GenerateCandidates(intArg(args, "count", 100), boolArg(args, "allow_v6", false), floatArg(args, "empirical_port_ratio", 0.3))
+	return candidatesMap(cs), nil
+}
+func (c *Client) runScan(ctx context.Context, args map[string]any) (any, error) {
+	if c.picker == nil {
+		return nil, fmt.Errorf("warp endpoint asset unavailable")
+	}
+	if c.scanProbe == nil {
+		return nil, fmt.Errorf("warp scan callback unavailable")
+	}
+	cs := c.picker.GenerateCandidates(intArg(args, "count", 100), boolArg(args, "allow_v6", false), floatArg(args, "empirical_port_ratio", 0.3))
+	results := make([]any, len(cs))
+	workers := c.scanConcurrency
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > len(cs) {
+		workers = len(cs)
+	}
+	if workers == 0 {
+		return map[string]any{"candidates": results}, nil
+	}
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			for n := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
+				a := map[string]any{"candidate": map[string]any{"ip": cs[n].IP, "port": cs[n].Port, "protocol": cs[n].Protocol, "sni": cs[n].SNI, "awg": cs[n].AWG}, "endpoint": cs[n].Endpoint(), "title": cs[n].NodeTitle()}
+				r, e := c.scanProbe(ctx, a)
+				if e != nil {
+					a["error"] = e.Error()
+				} else {
+					a["result"] = r
+				}
+				mu.Lock()
+				results[n] = a
+				mu.Unlock()
+			}
+		}()
+	}
+sendLoop:
+	for i := range cs {
+		select {
+		case jobs <- i:
+		case <-ctx.Done():
+			break sendLoop
+		}
+	}
+	close(jobs)
+	wg.Wait()
+	if e := ctx.Err(); e != nil {
+		return map[string]any{"candidates": results, "cancelled": true}, e
+	}
+	return map[string]any{"candidates": results}, nil
+}
+func candidatesMap(cs []Candidate) map[string]any {
+	out := make([]map[string]any, 0, len(cs))
+	for _, x := range cs {
+		out = append(out, map[string]any{"ip": x.IP, "port": x.Port, "protocol": x.Protocol, "sni": x.SNI, "endpoint": x.Endpoint(), "title": x.NodeTitle(), "awg": x.AWG})
+	}
+	return map[string]any{"candidates": out}
+}
+func (c *Client) dispatchRegister(ctx context.Context, args map[string]any, masque bool) (any, error) {
+	now := stringArg(args, "now", stringArg(args, "created_at", time.Now().UTC().Format(time.RFC3339)))
+	if masque {
+		a, e := c.RegisterMasque(ctx, now, stringArg(args, "sni", ""), stringArg(args, "idle_timeout", ""), stringArg(args, "keep_alive", ""))
+		if e != nil {
+			return nil, e
+		}
+		return a.ToMap(), nil
+	}
+	endpoint := stringArg(args, "endpoint", "")
+	obf := boolArg(args, "obfuscate", false)
+	if obf && endpoint == "" && boolArg(args, "random_endpoint", false) && c.picker != nil {
+		endpoint = c.picker.RandomEndpoint(boolArg(args, "allow_v6", false))
+	}
+	a, e := c.Register(ctx, RegisterArgs{License: stringArg(args, "license", ""), Endpoint: endpoint, Now: now, Obfuscate: obf, Quic: QuicParams{SNI: stringArg(args, "sni", ""), IP: stringArg(args, "ip", "quic"), IB: stringArg(args, "ib", "chrome"), JC: intArg(args, "jc", 4), JMin: intArg(args, "jmin", 40), JMax: intArg(args, "jmax", 70)}})
+	if e != nil {
+		return nil, e
+	}
+	return a.ToMap(), nil
+}
+
+type RegisterArgs struct {
+	License, Endpoint, Now string
+	Obfuscate              bool
+	Quic                   QuicParams
+}
+
+func (c *Client) Register(ctx context.Context, in RegisterArgs) (WarpAccount, error) {
+	priv, pub, e := GenerateWireGuardKeypair()
+	if e != nil {
+		return WarpAccount{}, e
+	}
+	body := map[string]any{"key": pub, "install_id": "", "fcm_token": "", "tos": in.Now, "model": "PC", "type": "Android", "locale": "en_US"}
+	resp, host, err := c.postReg(ctx, body)
+	if err != nil {
+		return WarpAccount{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return WarpAccount{}, fmt.Errorf("registration failed: HTTP %d", resp.StatusCode)
+	}
+	var raw map[string]any
+	if err = json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return WarpAccount{}, err
+	}
+	a, err := parseWarp(raw, priv, in.Endpoint, in.Now)
+	if err != nil {
+		return WarpAccount{}, err
+	}
+	if strings.TrimSpace(in.License) != "" {
+		a.License = in.License
+		plus, licenseErr := c.license(ctx, host, a, in.License)
+		a.WarpPlus = plus
+		if licenseErr != nil {
+			a.LicenseError = licenseErr.Error()
+		}
+	}
+	if in.Obfuscate {
+		a.AWG = BuildAmneziaAWG(in.Quic)
+	}
+	return a, nil
+}
+func (c *Client) RegisterMasque(ctx context.Context, now, sni, idle, keep string) (MasqueAccount, error) {
+	keys, e := GenerateMasqueKeys()
+	if e != nil {
+		return MasqueAccount{}, e
+	}
+	_, pub, e := GenerateWireGuardKeypair()
+	if e != nil {
+		return MasqueAccount{}, e
+	}
+	r, host, e := c.postReg(ctx, map[string]any{"key": pub, "install_id": "", "fcm_token": "", "tos": now, "model": "PC", "type": "Android", "locale": "en_US"})
+	if e != nil {
+		return MasqueAccount{}, e
+	}
+	defer r.Body.Close()
+	if r.StatusCode != http.StatusOK {
+		return MasqueAccount{}, fmt.Errorf("masque registration failed: HTTP %d", r.StatusCode)
+	}
+	var reg map[string]any
+	if e = json.NewDecoder(r.Body).Decode(&reg); e != nil {
+		return MasqueAccount{}, e
+	}
+	device, token := stringValue(reg["id"]), stringValue(reg["token"])
+	if device == "" || token == "" {
+		return MasqueAccount{}, fmt.Errorf("masque registration response: missing id/token")
+	}
+	pr, e := c.doJSON(ctx, http.MethodPatch, c.endpoint(host, "/"+apiVersion+"/reg/"+device), map[string]any{"key": keys.PublicDER, "key_type": "secp256r1", "tunnel_type": "masque"}, token)
+	if e != nil {
+		return MasqueAccount{}, e
+	}
+	defer pr.Body.Close()
+	if pr.StatusCode != http.StatusOK {
+		return MasqueAccount{}, fmt.Errorf("masque enroll failed: HTTP %d", pr.StatusCode)
+	}
+	var raw map[string]any
+	if e = json.NewDecoder(pr.Body).Decode(&raw); e != nil {
+		return MasqueAccount{}, e
+	}
+	return parseMasque(raw, keys.PrivateDER, device, token, now, sni, idle, keep)
+}
+func (c *Client) postReg(ctx context.Context, body map[string]any) (*http.Response, string, error) {
+	hosts := c.apiHosts
+	if len(hosts) == 0 {
+		hosts = fallbackAPIHosts
+	}
+	errs := []string{}
+	for _, h := range hosts {
+		r, e := c.doJSON(ctx, http.MethodPost, c.endpoint(h, "/"+apiVersion+"/reg"), body, "")
+		if e == nil {
+			return r, h, nil
+		}
+		errs = append(errs, h+": "+e.Error())
+	}
+	return nil, "", fmt.Errorf("WARP API unavailable: %s", strings.Join(errs, "; "))
+}
+func (c *Client) endpoint(host, path string) string { return strings.TrimRight(host, "/") + path }
+func (c *Client) doJSON(ctx context.Context, method, target string, body map[string]any, bearer string) (*http.Response, error) {
+	data, e := json.Marshal(body)
+	if e != nil {
+		return nil, e
+	}
+	req, e := http.NewRequestWithContext(ctx, method, target, bytes.NewReader(data))
+	if e != nil {
+		return nil, e
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("CF-Client-Version", clientVersion)
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	return c.http.Do(req)
+}
+func (c *Client) license(ctx context.Context, host string, a WarpAccount, license string) (bool, error) {
+	r, e := c.doJSON(ctx, http.MethodPatch, c.endpoint(host, "/"+apiVersion+"/reg/"+a.DeviceID+"/account"), map[string]any{"license": license}, a.Token)
+	if e != nil {
+		return false, e
+	}
+	defer r.Body.Close()
+	if r.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("license apply failed: HTTP %d", r.StatusCode)
+	}
+	var m map[string]any
+	if e = json.NewDecoder(r.Body).Decode(&m); e != nil {
+		return false, fmt.Errorf("license response: %w", e)
+	}
+	if v, ok := m["warp_plus"].(bool); ok {
+		return v, nil
+	}
+	if x, ok := m["account"].(map[string]any); ok {
+		v, _ := x["warp_plus"].(bool)
+		return v, nil
+	}
+	return false, fmt.Errorf("license response: missing warp_plus")
+}
+func parseWarp(m map[string]any, priv, endpoint, created string) (WarpAccount, error) {
+	cfg, _ := m["config"].(map[string]any)
+	if cfg == nil {
+		return WarpAccount{}, fmt.Errorf("registration response: missing config")
+	}
+	peers, _ := cfg["peers"].([]any)
+	pub, host := "", endpoint
+	if len(peers) > 0 {
+		p, _ := peers[0].(map[string]any)
+		pub = stringValue(p["public_key"])
+		if host == "" {
+			if ep, ok := p["endpoint"].(map[string]any); ok {
+				host = stringValue(ep["host"])
+			}
+		}
+	}
+	if host == "" {
+		host = DefaultEndpoint
+	}
+	iface, _ := cfg["interface"].(map[string]any)
+	ad, _ := iface["addresses"].(map[string]any)
+	v4, v6 := stringValue(ad["v4"]), stringValue(ad["v6"])
+	if pub == "" || v4 == "" {
+		return WarpAccount{}, fmt.Errorf("registration response: missing peer or interface")
+	}
+	acc, _ := m["account"].(map[string]any)
+	return WarpAccount{PrivateKey: priv, PeerPublic: pub, ClientV4: v4, ClientV6: v6, ClientID: stringValue(cfg["client_id"]), AccountID: stringValue(acc["id"]), DeviceID: stringValue(m["id"]), Token: stringValue(m["token"]), Endpoint: host, CreatedAt: created}, nil
+}
+func parseMasque(m map[string]any, priv, device, token, created, sni, idle, keep string) (MasqueAccount, error) {
+	cfg, _ := m["config"].(map[string]any)
+	if cfg == nil {
+		return MasqueAccount{}, fmt.Errorf("masque response: missing config")
+	}
+	iface, _ := cfg["interface"].(map[string]any)
+	ad, _ := iface["addresses"].(map[string]any)
+	v4, v6 := stringValue(ad["v4"]), stringValue(ad["v6"])
+	peers, _ := cfg["peers"].([]any)
+	if (v4 == "" && v6 == "") || len(peers) == 0 {
+		return MasqueAccount{}, fmt.Errorf("masque response: missing interface or peer")
+	}
+	p, _ := peers[0].(map[string]any)
+	pub, e := NormalizeServerPublicKey(stringValue(p["public_key"]))
+	if e != nil {
+		return MasqueAccount{}, e
+	}
+	ep, _ := p["endpoint"].(map[string]any)
+	server := DefaultMasqueServer
+	port := DefaultMasquePort
+	if x := stringValue(ep["v4"]); x != "" {
+		server = parseMasqueEndpointHost(x)
+	}
+	if ps, ok := ep["ports"].([]any); ok && len(ps) > 0 {
+		if n := intValue(ps[0]); n > 0 {
+			port = n
+		}
+	}
+	return MasqueAccount{PrivateKeyDER: priv, ServerPubDER: pub, ClientV4: v4, ClientV6: v6, Server: server, Port: port, DeviceID: device, Token: token, CreatedAt: created, SNI: sni, IdleTimeout: idle, KeepAlive: keep}, nil
+}
 
 // parseMasqueEndpointHost removes only the endpoint port, preserving IPv4 and
 // IPv6 literals. Cloudflare may use :0 as a port placeholder.
-func parseMasqueEndpointHost(raw string)string{
-	raw=strings.TrimSpace(raw)
-	if host,port,err:=net.SplitHostPort(raw);err==nil&&port!=""{return host}
-	if host,port,err:=net.SplitHostPort("["+raw+"]");err==nil&&port!=""{return host}
-	return strings.TrimSuffix(raw,":0")
+func parseMasqueEndpointHost(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if host, port, err := net.SplitHostPort(raw); err == nil && port != "" {
+		return host
+	}
+	if host, port, err := net.SplitHostPort("[" + raw + "]"); err == nil && port != "" {
+		return host
+	}
+	return strings.TrimSuffix(raw, ":0")
 }
-func accountMap(args map[string]any)(map[string]any,error){if m,ok:=args["account"].(map[string]any);ok{return m,nil};if s,ok:=args["account_json"].(string);ok{return UnmarshalMap([]byte(s))};return nil,fmt.Errorf("account or account_json argument required")}
-func accountArg(a map[string]any)(WarpAccount,error){m,e:=accountMap(a);if e!=nil{return WarpAccount{},e};return WarpAccountFromMap(m)}
-func masqueArg(a map[string]any)(MasqueAccount,error){m,e:=accountMap(a);if e!=nil{return MasqueAccount{},e};return MasqueAccountFromMap(m)}
-func stringArg(m map[string]any,k,d string)string{if s,ok:=m[k].(string);ok{return s};return d}
-func boolArg(m map[string]any,k string,d bool)bool{if b,ok:=m[k].(bool);ok{return b};return d}
-func intArg(m map[string]any,k string,d int)int{if v:=intValue(m[k]);v!=0{return v};return d}
-func floatArg(m map[string]any,k string,d float64)float64{if v,ok:=m[k].(float64);ok{return v};return d}
-func RedactMap(m map[string]any)map[string]any{o:=map[string]any{};for k,v:=range m{lk:=strings.ToLower(k);if strings.Contains(lk,"priv")||strings.Contains(lk,"token")||strings.Contains(lk,"secret")||strings.Contains(lk,"license")||strings.Contains(lk,"password")||strings.Contains(lk,"authorization"){o[k]="<redacted>";continue};if x,ok:=v.(map[string]any);ok{o[k]=RedactMap(x)}else{ o[k]=v}};return o}
+func accountMap(args map[string]any) (map[string]any, error) {
+	if m, ok := args["account"].(map[string]any); ok {
+		return m, nil
+	}
+	if s, ok := args["account_json"].(string); ok {
+		return UnmarshalMap([]byte(s))
+	}
+	return nil, fmt.Errorf("account or account_json argument required")
+}
+func accountArg(a map[string]any) (WarpAccount, error) {
+	m, e := accountMap(a)
+	if e != nil {
+		return WarpAccount{}, e
+	}
+	return WarpAccountFromMap(m)
+}
+func masqueArg(a map[string]any) (MasqueAccount, error) {
+	m, e := accountMap(a)
+	if e != nil {
+		return MasqueAccount{}, e
+	}
+	return MasqueAccountFromMap(m)
+}
+func stringArg(m map[string]any, k, d string) string {
+	if s, ok := m[k].(string); ok {
+		return s
+	}
+	return d
+}
+func boolArg(m map[string]any, k string, d bool) bool {
+	if b, ok := m[k].(bool); ok {
+		return b
+	}
+	return d
+}
+func intArg(m map[string]any, k string, d int) int {
+	if v := intValue(m[k]); v != 0 {
+		return v
+	}
+	return d
+}
+func floatArg(m map[string]any, k string, d float64) float64 {
+	if v, ok := m[k].(float64); ok {
+		return v
+	}
+	return d
+}
+func RedactMap(m map[string]any) map[string]any {
+	o := map[string]any{}
+	for k, v := range m {
+		lk := strings.ToLower(k)
+		if strings.Contains(lk, "priv") || strings.Contains(lk, "token") || strings.Contains(lk, "secret") || strings.Contains(lk, "license") || strings.Contains(lk, "password") || strings.Contains(lk, "authorization") {
+			o[k] = "<redacted>"
+			continue
+		}
+		if x, ok := v.(map[string]any); ok {
+			o[k] = RedactMap(x)
+		} else {
+			o[k] = v
+		}
+	}
+	return o
+}

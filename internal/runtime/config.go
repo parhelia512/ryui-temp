@@ -174,8 +174,8 @@ func lockConfigBuild(ctx context.Context, mutation *sync.Mutex) error {
 }
 
 type configNodeBudgetInput struct {
-	records []map[string]any
-	parsed map[string][]map[string]any
+	records       []map[string]any
+	parsed        map[string][]map[string]any
 	memberIndexes map[string][]int
 }
 
@@ -198,7 +198,7 @@ func prepareConfigBuild(ctx context.Context, snapshot configBuildSnapshot) (buil
 		return input, diagnostics, err
 	}
 	var failures []error
-	budgetInput:=configNodeBudgetInput{parsed:map[string][]map[string]any{},memberIndexes:map[string][]int{}}
+	budgetInput := configNodeBudgetInput{parsed: map[string][]map[string]any{}, memberIndexes: map[string][]int{}}
 	for index, record := range records {
 		if err := ctx.Err(); err != nil {
 			return input, diagnostics, err
@@ -208,7 +208,7 @@ func prepareConfigBuild(ctx context.Context, snapshot configBuildSnapshot) (buil
 			return input, diagnostics, err
 		}
 		path := fmt.Sprintf("sources[%d]", index)
-		budgetInput.records=append(budgetInput.records,source)
+		budgetInput.records = append(budgetInput.records, source)
 		prepared, findings, err := prepareConfigSourceBudget(ctx, source, path, snapshot, &budgetInput)
 		diagnostics = append(diagnostics, findings...)
 		input.Sources = append(input.Sources, prepared)
@@ -219,33 +219,60 @@ func prepareConfigBuild(ctx context.Context, snapshot configBuildSnapshot) (buil
 	if err := ctx.Err(); err != nil {
 		return input, diagnostics, err
 	}
-	if len(failures)>0{return input,diagnostics,errors.Join(failures...)}
-	limit:=NodeBudgetDefault;if configured,ok:=budgetInt(snapshot.settings["node_budget"]);ok{limit=configured};if limit<1{limit=1}
-	allocation,err:=AllocateNodeBudget(budgetInput.records,budgetInput.parsed,limit,NodeBudgetOptions{Document:snapshot.settings})
-	diagnostics=append(diagnostics,allocation.Diagnostics...)
-	if err!=nil{diagnostics=append(diagnostics,configDiagnostic("node_budget_failed","sources",err.Error()));return input,diagnostics,err}
-	for index:=range input.Sources{
-		source:=&input.Sources[index]
-		switch source.Kind{
-		case "subscription","server":
-			source.Nodes=allocation.NodesBySource[source.ID]
+	if len(failures) > 0 {
+		return input, diagnostics, errors.Join(failures...)
+	}
+	limit := NodeBudgetDefault
+	if configured, ok := budgetInt(snapshot.settings["node_budget"]); ok {
+		limit = configured
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	allocation, err := AllocateNodeBudget(budgetInput.records, budgetInput.parsed, limit, NodeBudgetOptions{Document: snapshot.settings})
+	diagnostics = append(diagnostics, allocation.Diagnostics...)
+	if err != nil {
+		diagnostics = append(diagnostics, configDiagnostic("node_budget_failed", "sources", err.Error()))
+		return input, diagnostics, err
+	}
+	for index := range input.Sources {
+		source := &input.Sources[index]
+		switch source.Kind {
+		case "subscription", "server":
+			source.Nodes = allocation.NodesBySource[source.ID]
 		case "folder":
-			indexes:=budgetInput.memberIndexes[source.ID]
-			for mi:=range source.Members{
-				if source.Members[mi].Node==nil{continue};if mi>=len(indexes){return input,diagnostics,errors.New("node budget folder index mapping is incomplete")}
-				memberIndex:=indexes[mi]
+			indexes := budgetInput.memberIndexes[source.ID]
+			for mi := range source.Members {
+				if source.Members[mi].Node == nil {
+					continue
+				}
+				if mi >= len(indexes) {
+					return input, diagnostics, errors.New("node budget folder index mapping is incomplete")
+				}
+				memberIndex := indexes[mi]
 				// Group/chain members have no parsed Node and keep their original
 				// raw records. Server members retain per-member enabled/detour.
-				for _,detail:=range allocation.DetailsBySource[source.ID]{if n,ok:=budgetInt(detail["member_index"]);ok&&n==memberIndex{if body,ok:=detail["canonical"].(map[string]any);ok{source.Members[mi].Node=body};enabled:=budgetBool(detail,"enabled",true);source.Members[mi].Enabled=&enabled;break}}
+				for _, detail := range allocation.DetailsBySource[source.ID] {
+					if n, ok := budgetInt(detail["member_index"]); ok && n == memberIndex {
+						if body, ok := detail["canonical"].(map[string]any); ok {
+							source.Members[mi].Node = body
+						}
+						enabled := budgetBool(detail, "enabled", true)
+						source.Members[mi].Enabled = &enabled
+						break
+					}
+				}
 			}
 		}
 	}
-	if err:=ctx.Err();err!=nil{return input,diagnostics,err}
+	if err := ctx.Err(); err != nil {
+		return input, diagnostics, err
+	}
 	return input, diagnostics, nil
 }
 
 func prepareConfigSource(ctx context.Context, record map[string]any, path string, snapshot configBuildSnapshot) (builder.SourceInput, []any, error) {
-	return prepareConfigSourceBudget(ctx,record,path,snapshot,nil)
+	return prepareConfigSourceBudget(ctx, record, path, snapshot, nil)
 }
 
 func prepareConfigSourceBudget(ctx context.Context, record map[string]any, path string, snapshot configBuildSnapshot, budgetInput *configNodeBudgetInput) (builder.SourceInput, []any, error) {
@@ -314,7 +341,9 @@ func prepareConfigSourceBudget(ctx context.Context, record map[string]any, path 
 		diagnostics = append(diagnostics, findings...)
 		// Details retain disabled nodes for budget counting and legacy identity
 		// migration. The enabled projection alone would undercount the source.
-		if budgetInput!=nil{budgetInput.parsed[source.ID]=details}
+		if budgetInput != nil {
+			budgetInput.parsed[source.ID] = details
+		}
 		source.Nodes = nodes
 		if contextErr := ctx.Err(); contextErr != nil {
 			return source, diagnostics, contextErr
@@ -332,7 +361,9 @@ func prepareConfigSourceBudget(ctx context.Context, record map[string]any, path 
 		nodes, findings, err := parseConfigRecord(ctx, record, metadata, path)
 		diagnostics = append(diagnostics, findings...)
 		source.Nodes = nodes
-		if budgetInput!=nil{budgetInput.parsed[source.ID]=nodes}
+		if budgetInput != nil {
+			budgetInput.parsed[source.ID] = nodes
+		}
 		return source, diagnostics, err
 	case "folder":
 		members, ok := record["nodes"].([]any)
@@ -340,7 +371,9 @@ func prepareConfigSourceBudget(ctx context.Context, record map[string]any, path 
 			return fail("invalid_folder", "folder nodes must be an array")
 		}
 		var failures []error
-		if budgetInput!=nil{budgetInput.parsed[source.ID]=[]map[string]any{}}
+		if budgetInput != nil {
+			budgetInput.parsed[source.ID] = []map[string]any{}
+		}
 		for index, value := range members {
 			if err := ctx.Err(); err != nil {
 				return source, diagnostics, err
@@ -354,10 +387,12 @@ func prepareConfigSourceBudget(ctx context.Context, record map[string]any, path 
 			}
 			prepared, findings, err := prepareConfigMember(ctx, member, metadata, memberPath)
 			diagnostics = append(diagnostics, findings...)
-			if budgetInput!=nil{
-				for _,entry:=range prepared{
-					budgetInput.memberIndexes[source.ID]=append(budgetInput.memberIndexes[source.ID],index)
-					if entry.Node!=nil{budgetInput.parsed[source.ID]=append(budgetInput.parsed[source.ID],map[string]any{"canonical":entry.Node,"name":sourceString(entry.Node,"tag"),"member_index":index,"enabled":entry.Enabled==nil||*entry.Enabled})}
+			if budgetInput != nil {
+				for _, entry := range prepared {
+					budgetInput.memberIndexes[source.ID] = append(budgetInput.memberIndexes[source.ID], index)
+					if entry.Node != nil {
+						budgetInput.parsed[source.ID] = append(budgetInput.parsed[source.ID], map[string]any{"canonical": entry.Node, "name": sourceString(entry.Node, "tag"), "member_index": index, "enabled": entry.Enabled == nil || *entry.Enabled})
+					}
 				}
 			}
 			source.Members = append(source.Members, prepared...)
@@ -401,7 +436,9 @@ func prepareConfigMember(ctx context.Context, record map[string]any, metadata pa
 			return []builder.MemberInput{member}, diagnostics, err
 		}
 		// FolderMember's original invariant is one member -> first parsed node.
-		if len(nodes)>1{nodes=nodes[:1]}
+		if len(nodes) > 1 {
+			nodes = nodes[:1]
+		}
 		members := make([]builder.MemberInput, 0, len(nodes))
 		for _, node := range nodes {
 			next := member

@@ -12,6 +12,12 @@ func (s *session) migration() ryui.Node {
 	refresh()
 	return page(section("Data migration", jsonView(status), actions(
 		button("Refresh", refresh, q.busy),
-		primary("Migrate saved data", func() { confirm("Migrate saved data?", func() { q.run("storage.migrate", nil, func(reply) { s.changedWorkspace() }) }) }, q.busy),
-		button("Recover corrupt settings", func() { confirm("Recover corrupt settings?", func() { q.run("storage.recover", object{"corrupt_settings": true}, func(reply) { s.changedWorkspace() }) }) }, q.busy)), q.feedback(), jsonView(q.result)))
+		primary("Migrate saved data", func() {
+			confirm("Migrate saved data?", func() { q.run("storage.migrate", nil, func(reply) { s.changedWorkspace() }) })
+		}, q.busy),
+		button("Recover corrupt settings", func() {
+			confirm("Recover corrupt settings?", func() {
+				q.run("storage.recover", object{"corrupt_settings": true}, func(reply) { s.changedWorkspace() })
+			})
+		}, q.busy)), q.feedback(), jsonView(q.result)))
 }

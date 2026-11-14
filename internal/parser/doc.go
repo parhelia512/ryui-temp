@@ -2,10 +2,10 @@
 //
 // API contract:
 //
-//   result := parser.Parse(ctx, body, parser.Options{
-//       ContractFS: contractAssets,
-//       Source: parser.Source{Kind: "subscription", ID: id, Name: name, URL: url},
-//   })
+//	result := parser.Parse(ctx, body, parser.Options{
+//	    ContractFS: contractAssets,
+//	    Source: parser.Source{Kind: "subscription", ID: id, Name: name, URL: url},
+//	})
 //
 // Result.Nodes is ordered by source position. Each Node.Raw is the source entry
 // (or {"uri": originalLink} for links); Node.Canonical is the normalized
@@ -20,9 +20,9 @@
 //
 // Examples after Emit:
 //
-//   Shadowsocks link -> {"type":"shadowsocks","tag":"office","server":"ss.example", ...}
-//   VLESS link       -> {"type":"vless","tag":"edge","server":"example", ...}
-//   WireGuard link   -> {"type":"wireguard","tag":"wg","server":"wg.example", ...}
+//	Shadowsocks link -> {"type":"shadowsocks","tag":"office","server":"ss.example", ...}
+//	VLESS link       -> {"type":"vless","tag":"edge","server":"example", ...}
+//	WireGuard link   -> {"type":"wireguard","tag":"wg","server":"wg.example", ...}
 //
 // Unknown contract schemes/protocols, malformed nodes and undecodable inputs
 // are returned as diagnostics; an empty node list is not treated as success.

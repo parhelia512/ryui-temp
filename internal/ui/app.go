@@ -41,7 +41,7 @@ type session struct {
 	events     *signal.Signal[[]event]
 	streamErr  *signal.Signal[string]
 	foreground atomic.Bool
-	epoch atomic.Uint64
+	epoch      atomic.Uint64
 }
 
 // App is mounted by the Go main entry point, on RyUI's main thread.
@@ -54,17 +54,27 @@ func App() ryui.Node {
 	s.foreground.Store(true)
 	signal.OnCleanup(func() { s.stopSpace(); s.cancel() })
 	app.OnLifecycle(func(state app.State) {
-		if s.ctx.Err() != nil { return }
-		if state == app.Background { s.foreground.Store(false) }
-		if state == app.Foreground { s.foreground.Store(true) }
+		if s.ctx.Err() != nil {
+			return
+		}
+		if state == app.Background {
+			s.foreground.Store(false)
+		}
+		if state == app.Foreground {
+			s.foreground.Store(true)
+		}
 	})
 	ryui.SetLanguages("en", "ru", "zh")
 	go func() {
 		loadCatalog()
 		r, err := dispatch(s.ctx, "settings.get", nil)
 		ryui.Post(func() {
-			if s.ctx.Err() != nil { return }
-			if err == nil { s.applyPreferences(asObject(r.value)) }
+			if s.ctx.Err() != nil {
+				return
+			}
+			if err == nil {
+				s.applyPreferences(asObject(r.value))
+			}
 		})
 	}()
 	go s.pollEvents()
@@ -117,21 +127,25 @@ func (s *session) changedWorkspace() {
 	ctx := s.workspace
 	go func() {
 		r, err := dispatch(ctx, "settings.get", nil)
-		ryui.Post(func() { if ctx.Err() == nil && err == nil { s.applyPreferences(asObject(r.value)) } })
+		ryui.Post(func() {
+			if ctx.Err() == nil && err == nil {
+				s.applyPreferences(asObject(r.value))
+			}
+		})
 	}()
 }
 
 // scope is owned by one screen. Only its main-thread callbacks touch signals.
 // Workers return canonical JSON so all runtime response types are accepted.
 type scope struct {
-	ctx context.Context
-	cancel context.CancelFunc
-	clientID string
-	usesCore bool
+	ctx       context.Context
+	cancel    context.CancelFunc
+	clientID  string
+	usesCore  bool
 	operation context.CancelFunc
-	busy *signal.Signal[bool]
-	err *signal.Signal[string]
-	result *signal.Signal[string]
+	busy      *signal.Signal[bool]
+	err       *signal.Signal[string]
+	result    *signal.Signal[string]
 }
 
 var nextClient atomic.Uint64
@@ -153,14 +167,22 @@ func (s *session) scope() *scope {
 }
 
 func dispatch(ctx context.Context, method string, args any) (reply, error) {
-	if args == nil { args = object{} }
+	if args == nil {
+		args = object{}
+	}
 	payload, err := json.Marshal(args)
-	if err != nil { return reply{}, err }
+	if err != nil {
+		return reply{}, err
+	}
 	v, callErr := appruntime.Dispatch(ctx, method, payload)
 	encoded, err := json.MarshalIndent(v, "", "  ")
-	if err != nil { return reply{}, err }
+	if err != nil {
+		return reply{}, err
+	}
 	var decoded any
-	if err = json.Unmarshal(encoded, &decoded); err != nil { return reply{}, err }
+	if err = json.Unmarshal(encoded, &decoded); err != nil {
+		return reply{}, err
+	}
 	return reply{value: decoded, text: string(encoded)}, callErr
 }
 
@@ -169,7 +191,9 @@ func (q *scope) run(method string, args any, done func(reply)) {
 }
 
 func (q *scope) work(work func(context.Context) (reply, error), done func(reply)) {
-	if q.ctx.Err() != nil || q.busy.Peek() { return }
+	if q.ctx.Err() != nil || q.busy.Peek() {
+		return
+	}
 	ctx, cancel := context.WithCancel(q.ctx)
 	q.operation = cancel
 	q.busy.Set(true)
@@ -179,14 +203,25 @@ func (q *scope) work(work func(context.Context) (reply, error), done func(reply)
 		r, err := work(ctx)
 		ryui.Post(func() {
 			defer cancel()
-			if q.ctx.Err() != nil { return }
+			if q.ctx.Err() != nil {
+				return
+			}
 			q.operation = nil
 			q.busy.Set(false)
-			if r.value != nil { q.result.Set(r.text) }
-			if err != nil { q.err.Set(err.Error()); return }
-			if ctx.Err() != nil { return }
+			if r.value != nil {
+				q.result.Set(r.text)
+			}
+			if err != nil {
+				q.err.Set(err.Error())
+				return
+			}
+			if ctx.Err() != nil {
+				return
+			}
 			q.result.Set(r.text)
-			if done != nil { done(r) }
+			if done != nil {
+				done(r)
+			}
 		})
 	}()
 }
@@ -198,18 +233,28 @@ func (q *scope) core(method string, args any, done func(reply)) {
 		payload := object{}
 		if args != nil {
 			encoded, err := json.Marshal(args)
-			if err != nil { return reply{}, err }
-			if err := json.Unmarshal(encoded, &payload); err != nil { return reply{}, err }
+			if err != nil {
+				return reply{}, err
+			}
+			if err := json.Unmarshal(encoded, &payload); err != nil {
+				return reply{}, err
+			}
 		}
-		if payload == nil { payload = object{} }
+		if payload == nil {
+			payload = object{}
+		}
 		payload["client_id"] = clientID
-		if _, exists := payload["session_id"]; !exists { payload["session_id"] = clientID }
+		if _, exists := payload["session_id"]; !exists {
+			payload["session_id"] = clientID
+		}
 		return dispatch(ctx, "core.call", object{"method": method, "args": payload})
 	}, done)
 }
 
 func (q *scope) cancelRequest() {
-	if q.operation != nil { q.operation() }
+	if q.operation != nil {
+		q.operation()
+	}
 }
 
 func (q *scope) feedback() ryui.Node {
@@ -228,12 +273,20 @@ func (s *session) clientEvents(q *scope, kind string, receive func(any)) {
 	var after uint64
 	signal.Effect(func() {
 		for _, e := range s.events.Get() {
-			if e.ID <= after { continue }
+			if e.ID <= after {
+				continue
+			}
 			after = e.ID
-			if e.Type != kind { continue }
+			if e.Type != kind {
+				continue
+			}
 			var envelope object
-			if json.Unmarshal(e.Data, &envelope) != nil { continue }
-			if text(envelope["client_id"]) != q.clientID { continue }
+			if json.Unmarshal(e.Data, &envelope) != nil {
+				continue
+			}
+			if text(envelope["client_id"]) != q.clientID {
+				continue
+			}
 			receive(envelope["data"])
 		}
 	})
@@ -249,29 +302,51 @@ func (s *session) pollEvents() {
 			ctx, cancel := context.WithTimeout(s.ctx, 20*time.Second)
 			r, err := dispatch(ctx, "events.poll", object{"after": cursor})
 			cancel()
-			if s.ctx.Err() != nil { return }
+			if s.ctx.Err() != nil {
+				return
+			}
 			if err != nil {
 				message := err.Error()
-				ryui.Post(func() { if s.ctx.Err() == nil { s.streamErr.Set(message) } })
+				ryui.Post(func() {
+					if s.ctx.Err() == nil {
+						s.streamErr.Set(message)
+					}
+				})
 			} else {
-				var batch struct { Cursor uint64 `json:"cursor"`; Events []event `json:"events"`; Resync bool `json:"resync"` }
+				var batch struct {
+					Cursor uint64  `json:"cursor"`
+					Events []event `json:"events"`
+					Resync bool    `json:"resync"`
+				}
 				if err := json.Unmarshal([]byte(r.text), &batch); err == nil {
 					cursor = batch.Cursor
 					ryui.Post(func() {
-						if s.ctx.Err() != nil || s.epoch.Load() != epoch { return }
+						if s.ctx.Err() != nil || s.epoch.Load() != epoch {
+							return
+						}
 						s.streamErr.Set("")
-						if len(batch.Events) == 0 { return }
+						if len(batch.Events) == 0 {
+							return
+						}
 						s.events.Update(func(old []event) []event {
-							if batch.Resync { old = nil }
+							if batch.Resync {
+								old = nil
+							}
 							all := append(append([]event{}, old...), batch.Events...)
-							if len(all) > 500 { all = all[len(all)-500:] }
+							if len(all) > 500 {
+								all = all[len(all)-500:]
+							}
 							return all
 						})
 					})
 				}
 			}
 		}
-		select { case <-s.ctx.Done(): return; case <-ticker.C: }
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+		}
 	}
 }
 
@@ -283,18 +358,28 @@ var currentLanguage atomic.Value
 func loadCatalog() {
 	languages := map[string]map[string]string{}
 	for _, language := range []string{"zh", "ru"} {
-		data, err := assets.Read("l10n/"+language+"/ui.json")
-		if err != nil { continue }
-		var entries map[string]struct { Value json.RawMessage `json:"value"` }
-		if json.Unmarshal(data, &entries) != nil { continue }
+		data, err := assets.Read("l10n/" + language + "/ui.json")
+		if err != nil {
+			continue
+		}
+		var entries map[string]struct {
+			Value json.RawMessage `json:"value"`
+		}
+		if json.Unmarshal(data, &entries) != nil {
+			continue
+		}
 		messages := map[string]string{}
 		for source, entry := range entries {
 			var value string
 			if json.Unmarshal(entry.Value, &value) != nil {
 				var plural map[string]string
-				if json.Unmarshal(entry.Value, &plural) == nil { value = plural["other"] }
+				if json.Unmarshal(entry.Value, &plural) == nil {
+					value = plural["other"]
+				}
 			}
-			if value != "" { messages[source] = value }
+			if value != "" {
+				messages[source] = value
+			}
 		}
 		languages[language] = messages
 	}
@@ -303,26 +388,41 @@ func loadCatalog() {
 
 func tr(source string) string {
 	language, _ := currentLanguage.Load().(string)
-	if language == "" || language == "system" { language = ryui.Locale() }
+	if language == "" || language == "system" {
+		language = ryui.Locale()
+	}
 	language = strings.Split(strings.ReplaceAll(language, "_", "-"), "-")[0]
 	if languages, ok := catalog.Load().(map[string]map[string]string); ok {
-		if translated := languages[language][source]; translated != "" { return translated }
+		if translated := languages[language][source]; translated != "" {
+			return translated
+		}
 	}
 	return source
 }
 
 func (s *session) applyPreferences(doc object) {
 	language := text(asObject(doc["vars"])["app_language"])
-	if language != "zh" && language != "ru" && language != "en" { language = "system" }
+	if language != "zh" && language != "ru" && language != "en" {
+		language = "system"
+	}
 	previous, _ := currentLanguage.Load().(string)
 	currentLanguage.Store(language)
-	if language == "system" { ryui.SetLocale("") } else { ryui.SetLocale(language) }
-	switch text(asObject(doc["native_prefs"])["app_theme_mode"]) {
-	case "light": ryui.SetColorScheme(ryui.ColorSchemeLight)
-	case "dark": ryui.SetColorScheme(ryui.ColorSchemeDark)
-	default: ryui.SetColorScheme(ryui.ColorSchemeSystem)
+	if language == "system" {
+		ryui.SetLocale("")
+	} else {
+		ryui.SetLocale(language)
 	}
-	if previous != language { s.revision.Update(func(n int) int { return n+1 }) }
+	switch text(asObject(doc["native_prefs"])["app_theme_mode"]) {
+	case "light":
+		ryui.SetColorScheme(ryui.ColorSchemeLight)
+	case "dark":
+		ryui.SetColorScheme(ryui.ColorSchemeDark)
+	default:
+		ryui.SetColorScheme(ryui.ColorSchemeSystem)
+	}
+	if previous != language {
+		s.revision.Update(func(n int) int { return n + 1 })
+	}
 }
 
 func button(title string, action func(), disabled signal.Accessor[bool]) ryui.Node {
@@ -349,7 +449,9 @@ func actions(kids ...ryui.Node) ryui.Node {
 
 func field(label string, value *signal.Signal[string], multiline bool) ryui.Node {
 	style := ryui.Style{}
-	if multiline { style.Lines = 16 }
+	if multiline {
+		style.Lines = 16
+	}
 	return ryui.Column(ryui.Style{Gap: 5},
 		ryui.StaticText(tr(label), ryui.Style{Font: ryui.Footnote, Color: ryui.SecondaryLabel}),
 		ryui.TextField(ryui.TextFieldProps{Value: value, Placeholder: ryui.Val(tr(label)), Multiline: multiline,
@@ -369,38 +471,58 @@ func confirm(title string, action func()) {
 }
 
 func asObject(value any) object {
-	if v, ok := value.(map[string]any); ok { return v }
+	if v, ok := value.(map[string]any); ok {
+		return v
+	}
 	return object{}
 }
 
 func text(value any) string {
-	if value == nil { return "" }
-	if v, ok := value.(string); ok { return v }
+	if value == nil {
+		return ""
+	}
+	if v, ok := value.(string); ok {
+		return v
+	}
 	return fmt.Sprint(value)
 }
 
 func nameOf(value any) string {
 	v := asObject(value)
 	for _, key := range []string{"name", "tag", "hostName", "Tag", "title", "id"} {
-		if name := text(v[key]); name != "" { return name }
+		if name := text(v[key]); name != "" {
+			return name
+		}
 	}
 	return tr("Details")
 }
 
 func listOf(value any, keys ...string) []any {
-	if list, ok := value.([]any); ok { return list }
+	if list, ok := value.([]any); ok {
+		return list
+	}
 	v := asObject(value)
-	for _, key := range keys { if list, ok := v[key].([]any); ok { return list } }
+	for _, key := range keys {
+		if list, ok := v[key].([]any); ok {
+			return list
+		}
+	}
 	return nil
 }
 
 func pretty(value any) string {
 	encoded, err := json.MarshalIndent(value, "", "  ")
-	if err != nil { return text(value) }
+	if err != nil {
+		return text(value)
+	}
 	return string(encoded)
 }
 
 func required(values ...*signal.Signal[string]) bool {
-	for _, value := range values { if strings.TrimSpace(value.Peek()) == "" { return false } }
+	for _, value := range values {
+		if strings.TrimSpace(value.Peek()) == "" {
+			return false
+		}
+	}
 	return true
 }

@@ -15,30 +15,55 @@ func applyDirections(config, template, settings map[string]any, state *buildStat
 		magicNodes, _ := groupTemplates["magic_nodes"].(map[string]any)
 		for _, raw := range defaults {
 			record, ok := raw.(map[string]any)
-			if !ok { continue }
-				direction := map[string]any{"tag": record["tag"], "label": record["label"], "enabled": boolValue(record, "default_enabled", true)}
-				for _, role := range includeRoles {
-					node, ok := magicNodes[role].(map[string]any)
-					if !ok { state.fatal("direction_magic_node_missing", "template.group_templates.magic_nodes."+role, "default direction role is absent from template"); continue }
-					switch stringValue(node, "source") {
-					case "preset":
-						switch role { case "direct": direction["include_direct"] = true; case "block": direction["include_block"] = true; default: state.fatal("direction_magic_preset_unsupported", "template.group_templates.magic_nodes."+role, "unknown preset role cannot be represented") }
-					case "generate":
-						if role != "auto" { state.fatal("direction_magic_generated_unsupported", "template.group_templates.magic_nodes."+role, "generated direction role is unsupported") ; continue }
-						autoTemplate, _ := groupTemplates["auto"].(map[string]any)
-						auto := map[string]any{}
-						for key, value := range autoTemplate["options"].(map[string]any) { if key == "url" || key == "interval" || key == "tolerance" || key == "interrupt_exist_connections" { expanded, err := expand(value, state.vars, nil, state); if err == nil && expanded != nil { auto[key] = expanded } } }
-						direction["auto"] = auto
-					default: state.fatal("direction_magic_source_unsupported", "template.group_templates.magic_nodes."+role, "magic-node source is unsupported")
-				}
-				}
-				options, _ := directionTemplate["options"].(map[string]any)
-				if value, ok := options["interrupt_exist_connections"].(bool); ok { direction["interrupt_exist_connections"] = value }
-				directions = append(directions, direction)
+			if !ok {
+				continue
 			}
+			direction := map[string]any{"tag": record["tag"], "label": record["label"], "enabled": boolValue(record, "default_enabled", true)}
+			for _, role := range includeRoles {
+				node, ok := magicNodes[role].(map[string]any)
+				if !ok {
+					state.fatal("direction_magic_node_missing", "template.group_templates.magic_nodes."+role, "default direction role is absent from template")
+					continue
+				}
+				switch stringValue(node, "source") {
+				case "preset":
+					switch role {
+					case "direct":
+						direction["include_direct"] = true
+					case "block":
+						direction["include_block"] = true
+					default:
+						state.fatal("direction_magic_preset_unsupported", "template.group_templates.magic_nodes."+role, "unknown preset role cannot be represented")
+					}
+				case "generate":
+					if role != "auto" {
+						state.fatal("direction_magic_generated_unsupported", "template.group_templates.magic_nodes."+role, "generated direction role is unsupported")
+						continue
+					}
+					autoTemplate, _ := groupTemplates["auto"].(map[string]any)
+					auto := map[string]any{}
+					for key, value := range autoTemplate["options"].(map[string]any) {
+						if key == "url" || key == "interval" || key == "tolerance" || key == "interrupt_exist_connections" {
+							expanded, err := expand(value, state.vars, nil, state)
+							if err == nil && expanded != nil {
+								auto[key] = expanded
+							}
+						}
+					}
+					direction["auto"] = auto
+				default:
+					state.fatal("direction_magic_source_unsupported", "template.group_templates.magic_nodes."+role, "magic-node source is unsupported")
+				}
+			}
+			options, _ := directionTemplate["options"].(map[string]any)
+			if value, ok := options["interrupt_exist_connections"].(bool); ok {
+				direction["interrupt_exist_connections"] = value
+			}
+			directions = append(directions, direction)
 		}
+	}
 
-		if len(directions) == 0 {
+	if len(directions) == 0 {
 		state.fatal("directions_missing", "directions", "settings and template contain no directions")
 		return
 	}
@@ -90,10 +115,10 @@ func applyDirections(config, template, settings map[string]any, state *buildStat
 				included = append(included, candidate)
 			} else {
 				if !active[candidate] && knownDirection(candidate, directions) {
-				state.fatal("direction_include_disabled", "directions."+tag+".include", "include references a disabled direction: "+candidate)
-				continue
-			}
-			state.warn("direction_include_dropped", "directions."+tag+".include", "include must reference an enabled direction above", candidate)
+					state.fatal("direction_include_disabled", "directions."+tag+".include", "include references a disabled direction: "+candidate)
+					continue
+				}
+				state.warn("direction_include_dropped", "directions."+tag+".include", "include must reference an enabled direction above", candidate)
 			}
 		}
 

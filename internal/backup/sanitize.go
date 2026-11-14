@@ -44,7 +44,9 @@ func sanitizePortable(root map[string]any, warnings *[]Warning) map[string]any {
 					for i, value := range items {
 						if record, ok := value.(map[string]any); ok {
 							keys := set("kind", "tag", "ref", "id", "name", "enabled", "body", "description")
-							if section == "servers" && record["kind"] == "template" { keys["vars"] = true }
+							if section == "servers" && record["kind"] == "template" {
+								keys["vars"] = true
+							}
 							items[i] = filterObject(record, keys, fmt.Sprintf("dns.%s[%d]", section, i), warnings)
 						}
 					}
@@ -80,9 +82,9 @@ func sanitizeSource(record map[string]any, path string, warnings *[]Warning) {
 		}
 	}
 	if group, ok := record["group"].(map[string]any); ok {
-		group = filterObject(group, set("group_type", "default", "members", "strategy", "members_rule", "pool_badge"), path + ".group", warnings)
-		filterNested(group, "strategy", autoKeys(), path + ".group", warnings)
-		filterNested(group, "members_rule", set("include", "exclude"), path + ".group", warnings)
+		group = filterObject(group, set("group_type", "default", "members", "strategy", "members_rule", "pool_badge"), path+".group", warnings)
+		filterNested(group, "strategy", autoKeys(), path+".group", warnings)
+		filterNested(group, "members_rule", set("include", "exclude"), path+".group", warnings)
 		record["group"] = group
 	}
 }
@@ -93,8 +95,12 @@ func autoKeys() map[string]bool {
 
 func filterNested(parent map[string]any, key string, keys map[string]bool, path string, warnings *[]Warning) {
 	value, exists := parent[key]
-	if !exists { return }
-	if path != "" { path += "." }
+	if !exists {
+		return
+	}
+	if path != "" {
+		path += "."
+	}
 	path += key
 	record, ok := value.(map[string]any)
 	if !ok {
@@ -107,14 +113,23 @@ func filterNested(parent map[string]any, key string, keys map[string]bool, path 
 
 func emptyCategory(category string) any {
 	switch category {
-	case "route": return ""
-	case "vars", "native_prefs", "dns", "tun_apps": return map[string]any{}
-	default: return []any{}
+	case "route":
+		return ""
+	case "vars", "native_prefs", "dns", "tun_apps":
+		return map[string]any{}
+	default:
+		return []any{}
 	}
 }
 
 func clearOther(doc map[string]any) {
 	known := set("storage_version")
-	for _, category := range Categories { known[storageKey(category)] = true }
-	for key := range doc { if !known[key] { delete(doc, key) } }
+	for _, category := range Categories {
+		known[storageKey(category)] = true
+	}
+	for key := range doc {
+		if !known[key] {
+			delete(doc, key)
+		}
+	}
 }

@@ -124,37 +124,55 @@ func (a *Application) importBackupDocument(ctx context.Context, request backupRe
 	if _, err := backup.Merge(map[string]any{}, incoming, request.Categories, request.Replace, parsed.Declared); err != nil {
 		return nil, err
 	}
-	if err := ctx.Err(); err != nil { return nil, err }
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if a.platform != nil {
 		if _, err := a.platformCall(ctx, "vpn.stop", map[string]any{}); err != nil {
 			return nil, err
 		}
 	}
 	if a.core != nil {
-		if err := a.core.Stop(); err != nil { return nil, err }
+		if err := a.core.Stop(); err != nil {
+			return nil, err
+		}
 	}
 	a.mutation.Lock()
-	if err := ctx.Err(); err != nil { a.mutation.Unlock(); return nil, err }
+	if err := ctx.Err(); err != nil {
+		a.mutation.Unlock()
+		return nil, err
+	}
 	if a.generation != generation || a.revision != revision {
 		a.mutation.Unlock()
 		return nil, errors.New("settings or workspace changed while stopping VPN; preview and retry import")
 	}
 	var merged backup.MergeResult
 	err = a.store.UpdateIfGeneration(storeGeneration, func(doc map[string]any) error {
-		if err := ctx.Err(); err != nil { return err }
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		var mergeErr error
 		merged, mergeErr = backup.Merge(doc, incoming, request.Categories, request.Replace, parsed.Declared)
-		if mergeErr != nil { return mergeErr }
-		for key := range doc { delete(doc, key) }
-		for key, value := range merged.Data { doc[key] = value }
+		if mergeErr != nil {
+			return mergeErr
+		}
+		for key := range doc {
+			delete(doc, key)
+		}
+		for key, value := range merged.Data {
+			doc[key] = value
+		}
 		return nil
 	})
-	if err != nil { a.mutation.Unlock(); return nil, err }
+	if err != nil {
+		a.mutation.Unlock()
+		return nil, err
+	}
 	a.generation++
 	a.revision++
 	committedRevision, committedGeneration := a.revision, a.generation
 	a.refreshAutomation()
-	a.events.emit("settings.changed", map[string]any{"reason":"backup.import", "revision":committedRevision, "generation":committedGeneration})
+	a.events.emit("settings.changed", map[string]any{"reason": "backup.import", "revision": committedRevision, "generation": committedGeneration})
 	committed, snapshotErr := a.store.Snapshot()
 	a.mutation.Unlock()
 	warnings := append(append([]backup.Warning(nil), parsed.Warnings...), merged.Warnings...)
@@ -164,7 +182,9 @@ func (a *Application) importBackupDocument(ctx context.Context, request backupRe
 		"counts": backupCategoryCounts(incoming), "added": merged.Added, "kept": merged.Kept,
 		"warnings": warnings, "migration": migration, "revision": committedRevision, "generation": committedGeneration,
 	}
-	if snapshotErr != nil { return response, snapshotErr }
+	if snapshotErr != nil {
+		return response, snapshotErr
+	}
 	if backupCategorySelected(request.Categories, "native_prefs") || backupCategorySelected(request.Categories, "vars") {
 		if err := a.applyNativeSettings(ctx, committed); err != nil {
 			response["native_settings_error"] = err.Error()
@@ -175,8 +195,14 @@ func (a *Application) importBackupDocument(ctx context.Context, request backupRe
 }
 
 func backupCategorySelected(categories []string, category string) bool {
-	if len(categories) == 0 { return true }
-	for _, selected := range categories { if selected == category { return true } }
+	if len(categories) == 0 {
+		return true
+	}
+	for _, selected := range categories {
+		if selected == category {
+			return true
+		}
+	}
 	return false
 }
 

@@ -98,7 +98,7 @@ func TestApplyRuleRecordsPreservesUnknownInlineBodyAndResolvePair(t *testing.T) 
 	template := map[string]any{"selectable_rules": []any{}}
 	settings := map[string]any{"rules": []any{map[string]any{
 		"kind": "inline", "enabled": true,
-		"body": map[string]any{"domain": []any{"example.com"}, "outbound": "direct-out", "future_field": map[string]any{"keep": true}},
+		"body":    map[string]any{"domain": []any{"example.com"}, "outbound": "direct-out", "future_field": map[string]any{"keep": true}},
 		"resolve": map[string]any{"only": false, "strategy": "prefer_ipv4", "serverTag": "local_dns_resolver"},
 	}}}
 	state := &buildState{vars: map[string]any{}, root: map[string]string{}}

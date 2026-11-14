@@ -354,9 +354,9 @@ func (c *Controller) sendTaildropSources(ctx context.Context, args map[string]js
 }
 
 type taildropSendResult struct {
-	mu       sync.Mutex
-	done     chan struct{}
-	err      string
+	mu        sync.Mutex
+	done      chan struct{}
+	err       string
 	finished  bool
 	completed map[int32]int64
 }
@@ -481,7 +481,9 @@ func (c *Controller) saveTaildrop(ctx context.Context, args map[string]json.RawM
 	}()
 	buf := make([]byte, taildropIOChunkSize)
 	if err := taildropCopyChunks(ctx, input, buf, func(chunk []byte) error {
-		var response struct{ Written *int `json:"written"` }
+		var response struct {
+			Written *int `json:"written"`
+		}
 		err := c.taildropPlatformCall(ctx, "file.writeChunk", map[string]any{"handle": destination.Handle, "data": base64.StdEncoding.EncodeToString(chunk)}, &response)
 		if err == nil && (response.Written == nil || *response.Written != len(chunk)) {
 			err = io.ErrShortWrite
@@ -514,7 +516,7 @@ func (c *Controller) saveTaildrop(ctx context.Context, args map[string]json.RawM
 
 type taildropDownloadHandler struct{ done chan<- string }
 
-func (*taildropDownloadHandler) OnProgress(int64, int64) {}
+func (*taildropDownloadHandler) OnProgress(int64, int64)   {}
 func (h *taildropDownloadHandler) OnFinish(message string) { h.done <- message }
 
 func (c *Controller) taildropPlatformCall(ctx context.Context, method string, args any, out any) error {

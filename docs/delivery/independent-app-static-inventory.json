@@ -1,14 +1,13 @@
 {
-  "app": "D:\\sing-box-app\\lxbox-ryui-app",
-  "core": "D:\\sing-box-app\\sing-box-lx-1.14.4-lx.33",
   "app_go_files": 102,
-  "app_go_tests": 20,
-  "app_kotlin_files": 5,
-  "app_dart_files": 0,
-  "old_core_app_exists": false,
-  "old_core_app_backup_exists": false,
-  "third_party_vendor_in_app": false,
-  "patch_exists": true,
-  "workflow_exists": true,
-  "static_report_exists": true
+  "go_test_files": 20,
+  "kotlin_files": 5,
+  "dart_files": 0,
+  "contract_fixtures": 2110,
+  "independent_workflow": true,
+  "core_patch": true,
+  "old_core_app_path_exists": false,
+  "core_version": "1.14.4-lx.33",
+  "core_commit": "2d9a0a52df7881f55484d48f9daecb21d135f3e9",
+  "workflow_sha256": "e15f0b9a6f6e4c0d02e36fc8ef42d0286fa6f131a22bac2daa942e807c3e31f7"
 }

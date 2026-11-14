@@ -9,41 +9,445 @@ import (
 )
 
 type ProbeStatus string
-const(ProbePending ProbeStatus="pending";ProbeOK ProbeStatus="ok";ProbeFailed ProbeStatus="failed";ProbeBroken ProbeStatus="broken";ProbeInvalid ProbeStatus="invalid";ProbeGroup ProbeStatus="group")
-type ProbeResult struct{Status ProbeStatus `json:"status"`;DelayMS int `json:"delay_ms,omitempty"`;Message string `json:"message,omitempty"`}
-type ProbeTestFunc func(context.Context,map[string]any)(map[string]any,error)
-type ProbeJob struct{Index int `json:"index"`;Args map[string]any `json:"args"`}
-type ProbeRunner struct{Test ProbeTestFunc;Concurrency int}
-// Run uses the injected core callback; cancellation propagates through context.
-func(r ProbeRunner)Run(ctx context.Context,jobs []ProbeJob,onResult func(int,ProbeResult))error{if r.Test==nil{return fmt.Errorf("probe callback unavailable")};if len(jobs)==0{return nil};workers:=r.Concurrency;if workers<1{workers=1};if workers>len(jobs){workers=len(jobs)};queue:=make(chan ProbeJob);var wg sync.WaitGroup;var callbackMu sync.Mutex;worker:=func(){defer wg.Done();for job:=range queue{if ctx.Err()!=nil{return};raw,e:=r.Test(ctx,job.Args);result:=ProbeResult{};if e!=nil{result=ProbeResult{Status:ProbeFailed,Message:e.Error()}}else if msg:=stringValue(raw["error"]);msg!=""{result=ProbeResult{Status:ProbeFailed,Message:msg}}else{result=ProbeResult{Status:ProbeOK,DelayMS:intValue(raw["delay_ms"])};if result.DelayMS==0{result.DelayMS=intValue(raw["delay"])}};if onResult!=nil&&ctx.Err()==nil{callbackMu.Lock();onResult(job.Index,result);callbackMu.Unlock()}}};wg.Add(workers);for i:=0;i<workers;i++{go worker()};sendLoop:for _,job:=range jobs{select{case queue<-job:case<-ctx.Done():break sendLoop}};close(queue);wg.Wait();return ctx.Err()}
 
-func ChainLayerTag(tag string,pos int)string{return fmt.Sprintf("%s#%d",tag,pos)}
-type ChainLayer struct{Pos int `json:"pos"`;Tag string `json:"tag"`;ProbeTag string `json:"probe_tag"`;CumulativeMS int `json:"cumulative_ms"`;Error string `json:"error,omitempty"`;NotReached bool `json:"not_reached,omitempty"`}
-type ChainReport struct{ChainTag string `json:"chain_tag"`;Layers []ChainLayer `json:"layers"`;URL string `json:"url"`;TimeoutMS int `json:"timeout_ms"`}
-func(r ChainReport)DeltaAt(i int)(int,bool){if i<=0||i>=len(r.Layers){return 0,false};a,b:=r.Layers[i],r.Layers[i-1];if a.Error!=""||b.Error!=""||a.NotReached||b.NotReached{return 0,false};d:=a.CumulativeMS-b.CumulativeMS;if d<0{d=0};return d,true}
-type ChainLayerProbe struct{Test ProbeTestFunc}
-func(p ChainLayerProbe)Run(ctx context.Context,chainTag string,hops []string,target string,timeoutMS int)(ChainReport,error){if len(hops)==0{return ChainReport{},fmt.Errorf("no_positions")};if p.Test==nil{return ChainReport{},fmt.Errorf("probe callback unavailable")};r:=ChainReport{ChainTag:chainTag,URL:target,TimeoutMS:timeoutMS,Layers:[]ChainLayer{}};broken:=false;for i,tag:=range hops{l:=ChainLayer{Pos:i,Tag:tag,ProbeTag:ChainLayerTag(chainTag,i)};if broken||ctx.Err()!=nil{l.NotReached=true;r.Layers=append(r.Layers,l);continue};raw,e:=p.Test(ctx,map[string]any{"tag":l.ProbeTag,"url":target,"timeout_ms":timeoutMS});if e!=nil{l.Error=e.Error();broken=true}else if msg:=stringValue(raw["error"]);msg!=""{l.Error=msg;broken=true}else{l.CumulativeMS=intValue(raw["delay_ms"]);if l.CumulativeMS==0{l.CumulativeMS=intValue(raw["delay"])}};r.Layers=append(r.Layers,l)};if e:=ctx.Err();e!=nil{return r,e};return r,nil}
+const (
+	ProbePending ProbeStatus = "pending"
+	ProbeOK      ProbeStatus = "ok"
+	ProbeFailed  ProbeStatus = "failed"
+	ProbeBroken  ProbeStatus = "broken"
+	ProbeInvalid ProbeStatus = "invalid"
+	ProbeGroup   ProbeStatus = "group"
+)
+
+type ProbeResult struct {
+	Status  ProbeStatus `json:"status"`
+	DelayMS int         `json:"delay_ms,omitempty"`
+	Message string      `json:"message,omitempty"`
+}
+type ProbeTestFunc func(context.Context, map[string]any) (map[string]any, error)
+type ProbeJob struct {
+	Index int            `json:"index"`
+	Args  map[string]any `json:"args"`
+}
+type ProbeRunner struct {
+	Test        ProbeTestFunc
+	Concurrency int
+}
+
+// Run uses the injected core callback; cancellation propagates through context.
+func (r ProbeRunner) Run(ctx context.Context, jobs []ProbeJob, onResult func(int, ProbeResult)) error {
+	if r.Test == nil {
+		return fmt.Errorf("probe callback unavailable")
+	}
+	if len(jobs) == 0 {
+		return nil
+	}
+	workers := r.Concurrency
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > len(jobs) {
+		workers = len(jobs)
+	}
+	queue := make(chan ProbeJob)
+	var wg sync.WaitGroup
+	var callbackMu sync.Mutex
+	worker := func() {
+		defer wg.Done()
+		for job := range queue {
+			if ctx.Err() != nil {
+				return
+			}
+			raw, e := r.Test(ctx, job.Args)
+			result := ProbeResult{}
+			if e != nil {
+				result = ProbeResult{Status: ProbeFailed, Message: e.Error()}
+			} else if msg := stringValue(raw["error"]); msg != "" {
+				result = ProbeResult{Status: ProbeFailed, Message: msg}
+			} else {
+				result = ProbeResult{Status: ProbeOK, DelayMS: intValue(raw["delay_ms"])}
+				if result.DelayMS == 0 {
+					result.DelayMS = intValue(raw["delay"])
+				}
+			}
+			if onResult != nil && ctx.Err() == nil {
+				callbackMu.Lock()
+				onResult(job.Index, result)
+				callbackMu.Unlock()
+			}
+		}
+	}
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go worker()
+	}
+sendLoop:
+	for _, job := range jobs {
+		select {
+		case queue <- job:
+		case <-ctx.Done():
+			break sendLoop
+		}
+	}
+	close(queue)
+	wg.Wait()
+	return ctx.Err()
+}
+
+func ChainLayerTag(tag string, pos int) string { return fmt.Sprintf("%s#%d", tag, pos) }
+
+type ChainLayer struct {
+	Pos          int    `json:"pos"`
+	Tag          string `json:"tag"`
+	ProbeTag     string `json:"probe_tag"`
+	CumulativeMS int    `json:"cumulative_ms"`
+	Error        string `json:"error,omitempty"`
+	NotReached   bool   `json:"not_reached,omitempty"`
+}
+type ChainReport struct {
+	ChainTag  string       `json:"chain_tag"`
+	Layers    []ChainLayer `json:"layers"`
+	URL       string       `json:"url"`
+	TimeoutMS int          `json:"timeout_ms"`
+}
+
+func (r ChainReport) DeltaAt(i int) (int, bool) {
+	if i <= 0 || i >= len(r.Layers) {
+		return 0, false
+	}
+	a, b := r.Layers[i], r.Layers[i-1]
+	if a.Error != "" || b.Error != "" || a.NotReached || b.NotReached {
+		return 0, false
+	}
+	d := a.CumulativeMS - b.CumulativeMS
+	if d < 0 {
+		d = 0
+	}
+	return d, true
+}
+
+type ChainLayerProbe struct{ Test ProbeTestFunc }
+
+func (p ChainLayerProbe) Run(ctx context.Context, chainTag string, hops []string, target string, timeoutMS int) (ChainReport, error) {
+	if len(hops) == 0 {
+		return ChainReport{}, fmt.Errorf("no_positions")
+	}
+	if p.Test == nil {
+		return ChainReport{}, fmt.Errorf("probe callback unavailable")
+	}
+	r := ChainReport{ChainTag: chainTag, URL: target, TimeoutMS: timeoutMS, Layers: []ChainLayer{}}
+	broken := false
+	for i, tag := range hops {
+		l := ChainLayer{Pos: i, Tag: tag, ProbeTag: ChainLayerTag(chainTag, i)}
+		if broken || ctx.Err() != nil {
+			l.NotReached = true
+			r.Layers = append(r.Layers, l)
+			continue
+		}
+		raw, e := p.Test(ctx, map[string]any{"tag": l.ProbeTag, "url": target, "timeout_ms": timeoutMS})
+		if e != nil {
+			l.Error = e.Error()
+			broken = true
+		} else if msg := stringValue(raw["error"]); msg != "" {
+			l.Error = msg
+			broken = true
+		} else {
+			l.CumulativeMS = intValue(raw["delay_ms"])
+			if l.CumulativeMS == 0 {
+				l.CumulativeMS = intValue(raw["delay"])
+			}
+		}
+		r.Layers = append(r.Layers, l)
+	}
+	if e := ctx.Err(); e != nil {
+		return r, e
+	}
+	return r, nil
+}
 
 // Connection test event values mirror the open-ended core wire schema.
-type TestAttr struct{Key string `json:"key"`;Value string `json:"value"`}
-type TestStage struct{ID int `json:"id"`;Parent int `json:"parent,omitempty"`;Kind string `json:"kind"`;Subject string `json:"subject,omitempty"`;StartMS int `json:"start_ms,omitempty"`;DurationMS int `json:"duration_ms,omitempty"`;Result int `json:"result"`;Error string `json:"error,omitempty"`;Attrs []TestAttr `json:"attrs,omitempty"`}
-type TestFinding struct{Code string `json:"code"`;Level int `json:"level"`;Stages []int `json:"stages,omitempty"`;Attrs []TestAttr `json:"attrs,omitempty"`}
-type TestResult struct{Error string `json:"error,omitempty"`;RootCause int `json:"root_cause,omitempty"`;Findings []TestFinding `json:"findings,omitempty"`;HTTPStatus int `json:"http_status,omitempty"`;ContentType string `json:"content_type,omitempty"`;BodyBytes int `json:"body_bytes,omitempty"`;Truncated bool `json:"truncated,omitempty"`;ElapsedMS int `json:"elapsed_ms,omitempty"`;StagesTruncated bool `json:"stages_truncated,omitempty"`}
-type ConnectionTrace struct{stages map[int]TestStage;order []int;Result *TestResult;TransportError string}
-func NewConnectionTrace()*ConnectionTrace{return &ConnectionTrace{stages:map[int]TestStage{}}}
-func(t *ConnectionTrace)Finished()bool{return t.Result!=nil||t.TransportError!=""}
-func(t *ConnectionTrace)ApplyStage(s TestStage){if t.Finished(){return};if _,ok:=t.stages[s.ID];!ok{t.order=append(t.order,s.ID)};t.stages[s.ID]=s}
-func(t *ConnectionTrace)ApplyResult(r TestResult){if !t.Finished(){t.Result=&r}}
-func(t *ConnectionTrace)ApplyError(err string){if !t.Finished(){if err==""{err="failed"};t.TransportError=err}}
-type TraceRow struct{Stage TestStage `json:"stage"`;Depth int `json:"depth"`;LastPath []bool `json:"last_path"`}
-func(t *ConnectionTrace)Rows()[]TraceRow{children:=map[int][]int{};roots:=[]int{};for _,id:=range t.order{s:=t.stages[id];if s.Parent!=0&&s.Parent!=id{if _,ok:=t.stages[s.Parent];ok{children[s.Parent]=append(children[s.Parent],id);continue}};roots=append(roots,id)};sortIDs:=func(a []int){sort.Slice(a,func(i,j int)bool{x,y:=t.stages[a[i]],t.stages[a[j]];if x.StartMS!=y.StartMS{return x.StartMS<y.StartMS};return a[i]<a[j]})};sortIDs(roots);for id:=range children{sortIDs(children[id])};out:=[]TraceRow{};seen:=map[int]bool{};var walk func(int,[]bool);walk=func(id int,path []bool){if seen[id]{return};seen[id]=true;out=append(out,TraceRow{t.stages[id],len(path)-1,append([]bool{},path...)});kids:=children[id];for i,k:=range kids{walk(k,append(append([]bool{},path...),i==len(kids)-1))}};for i,id:=range roots{walk(id,[]bool{i==len(roots)-1})};return out}
-func(t *ConnectionTrace)RootStage()(TestStage,bool){if t.Result==nil||t.Result.RootCause==0{return TestStage{},false};s,ok:=t.stages[t.Result.RootCause];return s,ok}
-func TraceFromMap(m map[string]any)(*ConnectionTrace,error){t:=NewConnectionTrace();events,_:=m["events"].([]any);for _,v:=range events{e,ok:=v.(map[string]any);if !ok{continue};switch stringValue(e["event"]){case "stage":t.ApplyStage(stageFromMap(e));case "result":t.ApplyResult(resultFromMap(e));default:t.ApplyError(stringValue(e["message"]))}};return t,nil}
-func stageFromMap(m map[string]any)TestStage{s:=TestStage{ID:intValue(m["id"]),Parent:intValue(m["parent"]),Kind:stringValue(m["kind"]),Subject:stringValue(m["subject"]),StartMS:intValue(m["start_ms"]),DurationMS:intValue(m["duration_ms"]),Result:intValue(m["result"]),Error:stringValue(m["error"])};if a,ok:=m["attrs"].([]any);ok{for _,v:=range a{if x,ok:=v.(map[string]any);ok{s.Attrs=append(s.Attrs,TestAttr{stringValue(x["key"]),stringValue(x["value"])})}}};return s}
-func resultFromMap(m map[string]any)TestResult{r:=TestResult{Error:stringValue(m["error"]),RootCause:intValue(m["root_cause"]),HTTPStatus:intValue(m["http_status"]),ContentType:stringValue(m["content_type"]),BodyBytes:intValue(m["body_bytes"]),Truncated:boolVal(m["truncated"]),ElapsedMS:intValue(m["elapsed_ms"]),StagesTruncated:boolVal(m["stages_truncated"])};if a,ok:=m["findings"].([]any);ok{for _,v:=range a{if x,ok:=v.(map[string]any);ok{f:=TestFinding{Code:stringValue(x["code"]),Level:intValue(x["level"])};if ns,ok:=x["stages"].([]any);ok{for _,n:=range ns{f.Stages=append(f.Stages,intValue(n))}};r.Findings=append(r.Findings,f)}}};return r}
-func TraceToText(t *ConnectionTrace,link,app string,depth int)string{names:=[]string{"http","dns","route","connect"};d:="http";if depth>=0&&depth<len(names){d=names[depth]};var b strings.Builder;fmt.Fprintf(&b,"URL check: %s\ndepth: %s",link,d);if app!=""{fmt.Fprintf(&b," · app: %s",app)};b.WriteString("\n\n");for _,row:=range t.Rows(){s:=row.Stage;mark:="…";switch s.Result{case 1:mark="✓";case 2:mark="✗";case 3:mark="-";case 4:mark="↺";case 5:mark="?";case 6:mark="∅"};pad:=strings.Repeat("  ",row.Depth);sub:="";for _,a:=range s.Attrs{if a.Key=="type"{sub=" "+a.Value;break}};if s.Subject!=""{sub+=" "+s.Subject};dur:="";if s.DurationMS>0{dur=fmt.Sprintf("  %d ms",s.DurationMS)};fmt.Fprintf(&b,"%5d  %s%s %s%s%s\n",s.StartMS,pad,mark,s.Kind,sub,dur);for _,a:=range s.Attrs{fmt.Fprintf(&b,"         %s: %s\n",a.Key,a.Value)};if s.Error!=""{fmt.Fprintf(&b,"         error: %s\n",s.Error)}};b.WriteString("\n");if t.TransportError!=""{fmt.Fprintf(&b,"stream error: %s\n",t.TransportError)}else if t.Result==nil{b.WriteString("not finished\n")}else if t.Result.Error!=""{fmt.Fprintf(&b,"test error: %s\n",t.Result.Error)}else if root,ok:=t.RootStage();ok{fmt.Fprintf(&b,"failed at %s %s: %s\n",root.Kind,root.Subject,root.Error)}else if depth==0{fmt.Fprintf(&b,"HTTP %d · %d ms\n",t.Result.HTTPStatus,t.Result.ElapsedMS)}else{fmt.Fprintf(&b,"completed · %d ms\n",t.Result.ElapsedMS)};return b.String()}
-func Redact(m map[string]any)map[string]any{o:=map[string]any{};for k,v:=range m{n:=strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(k,"-","_")," ","_"));if secretKey(n){o[k]="<redacted>";continue};switch x:=v.(type){case map[string]any:o[k]=Redact(x);case []any:a:=make([]any,len(x));for i,y:=range x{if mm,ok:=y.(map[string]any);ok{a[i]=Redact(mm)}else{a[i]=y}};o[k]=a;default:o[k]=v}};return o}
-func secretKey(k string)bool{for _,x:=range []string{"private","priv_key","token","secret","password","license","authorization","cookie","credential","client_key","access_key"}{if strings.Contains(k,x){return true}};return false}
-func boolVal(v any)bool{b,_:=v.(bool);return b}
-func stringValue(v any)string{s,_:=v.(string);return s}
-func intValue(v any)int{switch n:=v.(type){case int:return n;case int64:return int(n);case float64:return int(n)};return 0}
+type TestAttr struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+type TestStage struct {
+	ID         int        `json:"id"`
+	Parent     int        `json:"parent,omitempty"`
+	Kind       string     `json:"kind"`
+	Subject    string     `json:"subject,omitempty"`
+	StartMS    int        `json:"start_ms,omitempty"`
+	DurationMS int        `json:"duration_ms,omitempty"`
+	Result     int        `json:"result"`
+	Error      string     `json:"error,omitempty"`
+	Attrs      []TestAttr `json:"attrs,omitempty"`
+}
+type TestFinding struct {
+	Code   string     `json:"code"`
+	Level  int        `json:"level"`
+	Stages []int      `json:"stages,omitempty"`
+	Attrs  []TestAttr `json:"attrs,omitempty"`
+}
+type TestResult struct {
+	Error           string        `json:"error,omitempty"`
+	RootCause       int           `json:"root_cause,omitempty"`
+	Findings        []TestFinding `json:"findings,omitempty"`
+	HTTPStatus      int           `json:"http_status,omitempty"`
+	ContentType     string        `json:"content_type,omitempty"`
+	BodyBytes       int           `json:"body_bytes,omitempty"`
+	Truncated       bool          `json:"truncated,omitempty"`
+	ElapsedMS       int           `json:"elapsed_ms,omitempty"`
+	StagesTruncated bool          `json:"stages_truncated,omitempty"`
+}
+type ConnectionTrace struct {
+	stages         map[int]TestStage
+	order          []int
+	Result         *TestResult
+	TransportError string
+}
+
+func NewConnectionTrace() *ConnectionTrace { return &ConnectionTrace{stages: map[int]TestStage{}} }
+func (t *ConnectionTrace) Finished() bool  { return t.Result != nil || t.TransportError != "" }
+func (t *ConnectionTrace) ApplyStage(s TestStage) {
+	if t.Finished() {
+		return
+	}
+	if _, ok := t.stages[s.ID]; !ok {
+		t.order = append(t.order, s.ID)
+	}
+	t.stages[s.ID] = s
+}
+func (t *ConnectionTrace) ApplyResult(r TestResult) {
+	if !t.Finished() {
+		t.Result = &r
+	}
+}
+func (t *ConnectionTrace) ApplyError(err string) {
+	if !t.Finished() {
+		if err == "" {
+			err = "failed"
+		}
+		t.TransportError = err
+	}
+}
+
+type TraceRow struct {
+	Stage    TestStage `json:"stage"`
+	Depth    int       `json:"depth"`
+	LastPath []bool    `json:"last_path"`
+}
+
+func (t *ConnectionTrace) Rows() []TraceRow {
+	children := map[int][]int{}
+	roots := []int{}
+	for _, id := range t.order {
+		s := t.stages[id]
+		if s.Parent != 0 && s.Parent != id {
+			if _, ok := t.stages[s.Parent]; ok {
+				children[s.Parent] = append(children[s.Parent], id)
+				continue
+			}
+		}
+		roots = append(roots, id)
+	}
+	sortIDs := func(a []int) {
+		sort.Slice(a, func(i, j int) bool {
+			x, y := t.stages[a[i]], t.stages[a[j]]
+			if x.StartMS != y.StartMS {
+				return x.StartMS < y.StartMS
+			}
+			return a[i] < a[j]
+		})
+	}
+	sortIDs(roots)
+	for id := range children {
+		sortIDs(children[id])
+	}
+	out := []TraceRow{}
+	seen := map[int]bool{}
+	var walk func(int, []bool)
+	walk = func(id int, path []bool) {
+		if seen[id] {
+			return
+		}
+		seen[id] = true
+		out = append(out, TraceRow{t.stages[id], len(path) - 1, append([]bool{}, path...)})
+		kids := children[id]
+		for i, k := range kids {
+			walk(k, append(append([]bool{}, path...), i == len(kids)-1))
+		}
+	}
+	for i, id := range roots {
+		walk(id, []bool{i == len(roots)-1})
+	}
+	return out
+}
+func (t *ConnectionTrace) RootStage() (TestStage, bool) {
+	if t.Result == nil || t.Result.RootCause == 0 {
+		return TestStage{}, false
+	}
+	s, ok := t.stages[t.Result.RootCause]
+	return s, ok
+}
+func TraceFromMap(m map[string]any) (*ConnectionTrace, error) {
+	t := NewConnectionTrace()
+	events, _ := m["events"].([]any)
+	for _, v := range events {
+		e, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		switch stringValue(e["event"]) {
+		case "stage":
+			t.ApplyStage(stageFromMap(e))
+		case "result":
+			t.ApplyResult(resultFromMap(e))
+		default:
+			t.ApplyError(stringValue(e["message"]))
+		}
+	}
+	return t, nil
+}
+func stageFromMap(m map[string]any) TestStage {
+	s := TestStage{ID: intValue(m["id"]), Parent: intValue(m["parent"]), Kind: stringValue(m["kind"]), Subject: stringValue(m["subject"]), StartMS: intValue(m["start_ms"]), DurationMS: intValue(m["duration_ms"]), Result: intValue(m["result"]), Error: stringValue(m["error"])}
+	if a, ok := m["attrs"].([]any); ok {
+		for _, v := range a {
+			if x, ok := v.(map[string]any); ok {
+				s.Attrs = append(s.Attrs, TestAttr{stringValue(x["key"]), stringValue(x["value"])})
+			}
+		}
+	}
+	return s
+}
+func resultFromMap(m map[string]any) TestResult {
+	r := TestResult{Error: stringValue(m["error"]), RootCause: intValue(m["root_cause"]), HTTPStatus: intValue(m["http_status"]), ContentType: stringValue(m["content_type"]), BodyBytes: intValue(m["body_bytes"]), Truncated: boolVal(m["truncated"]), ElapsedMS: intValue(m["elapsed_ms"]), StagesTruncated: boolVal(m["stages_truncated"])}
+	if a, ok := m["findings"].([]any); ok {
+		for _, v := range a {
+			if x, ok := v.(map[string]any); ok {
+				f := TestFinding{Code: stringValue(x["code"]), Level: intValue(x["level"])}
+				if ns, ok := x["stages"].([]any); ok {
+					for _, n := range ns {
+						f.Stages = append(f.Stages, intValue(n))
+					}
+				}
+				r.Findings = append(r.Findings, f)
+			}
+		}
+	}
+	return r
+}
+func TraceToText(t *ConnectionTrace, link, app string, depth int) string {
+	names := []string{"http", "dns", "route", "connect"}
+	d := "http"
+	if depth >= 0 && depth < len(names) {
+		d = names[depth]
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "URL check: %s\ndepth: %s", link, d)
+	if app != "" {
+		fmt.Fprintf(&b, " · app: %s", app)
+	}
+	b.WriteString("\n\n")
+	for _, row := range t.Rows() {
+		s := row.Stage
+		mark := "…"
+		switch s.Result {
+		case 1:
+			mark = "✓"
+		case 2:
+			mark = "✗"
+		case 3:
+			mark = "-"
+		case 4:
+			mark = "↺"
+		case 5:
+			mark = "?"
+		case 6:
+			mark = "∅"
+		}
+		pad := strings.Repeat("  ", row.Depth)
+		sub := ""
+		for _, a := range s.Attrs {
+			if a.Key == "type" {
+				sub = " " + a.Value
+				break
+			}
+		}
+		if s.Subject != "" {
+			sub += " " + s.Subject
+		}
+		dur := ""
+		if s.DurationMS > 0 {
+			dur = fmt.Sprintf("  %d ms", s.DurationMS)
+		}
+		fmt.Fprintf(&b, "%5d  %s%s %s%s%s\n", s.StartMS, pad, mark, s.Kind, sub, dur)
+		for _, a := range s.Attrs {
+			fmt.Fprintf(&b, "         %s: %s\n", a.Key, a.Value)
+		}
+		if s.Error != "" {
+			fmt.Fprintf(&b, "         error: %s\n", s.Error)
+		}
+	}
+	b.WriteString("\n")
+	if t.TransportError != "" {
+		fmt.Fprintf(&b, "stream error: %s\n", t.TransportError)
+	} else if t.Result == nil {
+		b.WriteString("not finished\n")
+	} else if t.Result.Error != "" {
+		fmt.Fprintf(&b, "test error: %s\n", t.Result.Error)
+	} else if root, ok := t.RootStage(); ok {
+		fmt.Fprintf(&b, "failed at %s %s: %s\n", root.Kind, root.Subject, root.Error)
+	} else if depth == 0 {
+		fmt.Fprintf(&b, "HTTP %d · %d ms\n", t.Result.HTTPStatus, t.Result.ElapsedMS)
+	} else {
+		fmt.Fprintf(&b, "completed · %d ms\n", t.Result.ElapsedMS)
+	}
+	return b.String()
+}
+func Redact(m map[string]any) map[string]any {
+	o := map[string]any{}
+	for k, v := range m {
+		n := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(k, "-", "_"), " ", "_"))
+		if secretKey(n) {
+			o[k] = "<redacted>"
+			continue
+		}
+		switch x := v.(type) {
+		case map[string]any:
+			o[k] = Redact(x)
+		case []any:
+			a := make([]any, len(x))
+			for i, y := range x {
+				if mm, ok := y.(map[string]any); ok {
+					a[i] = Redact(mm)
+				} else {
+					a[i] = y
+				}
+			}
+			o[k] = a
+		default:
+			o[k] = v
+		}
+	}
+	return o
+}
+func secretKey(k string) bool {
+	for _, x := range []string{"private", "priv_key", "token", "secret", "password", "license", "authorization", "cookie", "credential", "client_key", "access_key"} {
+		if strings.Contains(k, x) {
+			return true
+		}
+	}
+	return false
+}
+func boolVal(v any) bool       { b, _ := v.(bool); return b }
+func stringValue(v any) string { s, _ := v.(string); return s }
+func intValue(v any) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	}
+	return 0
+}

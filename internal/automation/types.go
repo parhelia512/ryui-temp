@@ -36,15 +36,15 @@ type Logger func(level, message string, fields map[string]any)
 // Event is the public automation event.  Extras uses the original event field
 // names (for example old_tag/new_tag, sub_id, and latency_ms).
 type Event struct {
-	Name  string         `json:"event"`
+	Name   string         `json:"event"`
 	Extras map[string]any `json:"extras,omitempty"`
-	At    time.Time      `json:"at"`
+	At     time.Time      `json:"at"`
 }
 
 // Config mirrors every persisted automation setting in the original app.
 // Defaults are false when loaded from absent JSON keys.
 type Config struct {
-	ReceiveEnabled      bool `json:"automation_receive_enabled"`
+	ReceiveEnabled bool `json:"automation_receive_enabled"`
 	EventGates
 	ExplainerShownV1    bool `json:"automation_explainer_shown_v1"`
 	AppFunctionsEnabled bool `json:"appfunctions_enabled"`
@@ -80,7 +80,7 @@ type ConditionResult int
 const (
 	ConditionSatisfied   ConditionResult = 16
 	ConditionUnsatisfied ConditionResult = 17
-	ConditionUnknown    ConditionResult = 18
+	ConditionUnknown     ConditionResult = 18
 )
 
 // Setting is the JSON stored in Locale's EXTRA_BUNDLE.
@@ -133,9 +133,14 @@ func (e *Error) Error() string {
 	return e.Code + ": " + e.Message
 }
 
-func (e *Error) Unwrap() error { if e == nil { return nil }; return e.Cause }
+func (e *Error) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
 
-func invalid(message string) error { return &Error{Code: "bad_request", Message: message} }
+func invalid(message string) error  { return &Error{Code: "bad_request", Message: message} }
 func conflict(message string) error { return &Error{Code: "conflict", Message: message} }
 func notFound(message string) error { return &Error{Code: "not_found", Message: message} }
 

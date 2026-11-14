@@ -133,22 +133,69 @@ func replaceByTag(list []any, tag string, value map[string]any) {
 }
 func applyStoredDNS(config, settings map[string]any, state *buildState) {
 	stored, ok := settings["dns"].(map[string]any)
-	if !ok { return }
+	if !ok {
+		return
+	}
 	dns, _ := config["dns"].(map[string]any)
-	if dns == nil { dns = map[string]any{}; config["dns"] = dns }
-	for key, value := range stored { if key != "servers" && key != "rules" { dns[key] = clone(value) } }
-	if rules, ok := stored["rules"].([]any); ok && len(rules) > 0 { state.fatal("dns_rules_unsupported", "settings.dns.rules", "stored DNS rule references are not implemented") }
+	if dns == nil {
+		dns = map[string]any{}
+		config["dns"] = dns
+	}
+	for key, value := range stored {
+		if key != "servers" && key != "rules" {
+			dns[key] = clone(value)
+		}
+	}
+	if rules, ok := stored["rules"].([]any); ok && len(rules) > 0 {
+		state.fatal("dns_rules_unsupported", "settings.dns.rules", "stored DNS rule references are not implemented")
+	}
 }
 func applyConfigOverrides(config, settings map[string]any, state *buildState) {
-	for _, key := range []string{"config", "config_overrides"} { if override, ok := settings[key].(map[string]any); ok { deepMerge(config, override) } }
-	for key, value := range settings { if !knownSettingSection(key) { state.warn("unknown_setting_section", "settings."+key, "unknown setting section is not interpreted", value) } }
+	for _, key := range []string{"config", "config_overrides"} {
+		if override, ok := settings[key].(map[string]any); ok {
+			deepMerge(config, override)
+		}
+	}
+	for key, value := range settings {
+		if !knownSettingSection(key) {
+			state.warn("unknown_setting_section", "settings."+key, "unknown setting section is not interpreted", value)
+		}
+	}
 }
 func deepMerge(dst, src map[string]any) {
 	for key, value := range src {
-		if nested, ok := value.(map[string]any); ok { current, ok := dst[key].(map[string]any); if !ok { current = map[string]any{}; dst[key] = current }; deepMerge(current, nested) } else { dst[key] = clone(value) }
+		if nested, ok := value.(map[string]any); ok {
+			current, ok := dst[key].(map[string]any)
+			if !ok {
+				current = map[string]any{}
+				dst[key] = current
+			}
+			deepMerge(current, nested)
+		} else {
+			dst[key] = clone(value)
+		}
 	}
 }
-func knownSettingSection(key string) bool { switch key { case "vars", "directions", "enabled_groups", "custom_rules", "route_final", "vpn_mode", "tun", "dns", "route", "config", "config_overrides", "sources", "chains", "mixins", "tun_apps", "rule_sets": return true }; return false }
-func asList(value any) []any { if list, ok := value.([]any); ok { return list }; return nil }
-func routeRules(config map[string]any) []any { route, _ := config["route"].(map[string]any); if route == nil { route = map[string]any{}; config["route"] = route }; rules, _ := route["rules"].([]any); return rules }
+func knownSettingSection(key string) bool {
+	switch key {
+	case "vars", "directions", "enabled_groups", "custom_rules", "route_final", "vpn_mode", "tun", "dns", "route", "config", "config_overrides", "sources", "chains", "mixins", "tun_apps", "rule_sets":
+		return true
+	}
+	return false
+}
+func asList(value any) []any {
+	if list, ok := value.([]any); ok {
+		return list
+	}
+	return nil
+}
+func routeRules(config map[string]any) []any {
+	route, _ := config["route"].(map[string]any)
+	if route == nil {
+		route = map[string]any{}
+		config["route"] = route
+	}
+	rules, _ := route["rules"].([]any)
+	return rules
+}
 func diagnosticPath(parts ...string) string { return strings.Join(parts, ".") }

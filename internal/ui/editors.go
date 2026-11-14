@@ -34,10 +34,14 @@ func (s *session) addImportRule(nav *ryui.Navigator, rules *signal.Signal[string
 			primary("Add rule", func() {
 				input := rules.Peek()
 				rule := object{"conditions": []any{object{"path": path.Peek(), "op": op.Peek(), "pattern": pattern.Peek(), "negate": negate.Peek(), "case_sensitive": caseSensitive.Peek()}}, "action": action.Peek()}
-				if action.Peek() == "replace" { rule["target_path"], rule["replacement"], rule["replace_mode"] = target.Peek(), replacement.Peek(), mode.Peek() }
+				if action.Peek() == "replace" {
+					rule["target_path"], rule["replacement"], rule["replace_mode"] = target.Peek(), replacement.Peek(), mode.Peek()
+				}
 				q.work(func(context.Context) (reply, error) {
 					var entries []any
-					if err := json.Unmarshal([]byte(input), &entries); err != nil { return reply{}, err }
+					if err := json.Unmarshal([]byte(input), &entries); err != nil {
+						return reply{}, err
+					}
 					entries = append(entries, rule)
 					return reply{value: entries, text: pretty(entries)}, nil
 				}, func(r reply) { rules.Set(r.text); nav.Pop() })
@@ -57,23 +61,37 @@ func (s *session) reports() ryui.Node {
 	typeName := signal.New("all")
 	profile := signal.New("heap")
 	artifact := signal.New("")
-	refresh := func() { q.run("reports.list", object{"kind": typeName.Peek()}, func(r reply) { items.Set(listOf(r.value, "reports", "items")) }) }
+	refresh := func() {
+		q.run("reports.list", object{"kind": typeName.Peek()}, func(r reply) { items.Set(listOf(r.value, "reports", "items")) })
+	}
 	refresh()
 	return page(section("Reports", choice("Report type", typeName, []string{"all", "crash", "oom"}, []string{"All", "Crashes", "Out of memory"}),
-		choice("Profile",profile,[]string{"heap","allocs","goroutine","profile","block","mutex","threadcreate"},[]string{"Heap","Allocations","Goroutines","CPU","Blocking","Mutex","Threads"}), actions(
-		button("Refresh", refresh, q.busy), button("Memory", func() { q.run("memory.get", nil, nil) }, q.busy),
-		button("Capture pprof", func() { q.run("pprof.capture", object{"kind": profile.Peek()}, func(r reply){artifact.Set(text(asObject(r.value)["data"]))}) }, q.busy),
-		button("Save profile…",func(){q.run("transfer.saf.export",object{"payload":object{"kind":"file","name":profile.Peek()+".pprof","mime":"application/octet-stream","bytes":artifact.Peek()}},nil)},signal.Func(func()bool{return q.busy.Get()||artifact.Get()==""}))), q.feedback()),
+		choice("Profile", profile, []string{"heap", "allocs", "goroutine", "profile", "block", "mutex", "threadcreate"}, []string{"Heap", "Allocations", "Goroutines", "CPU", "Blocking", "Mutex", "Threads"}), actions(
+			button("Refresh", refresh, q.busy), button("Memory", func() { q.run("memory.get", nil, nil) }, q.busy),
+			button("Capture pprof", func() {
+				q.run("pprof.capture", object{"kind": profile.Peek()}, func(r reply) { artifact.Set(text(asObject(r.value)["data"])) })
+			}, q.busy),
+			button("Save profile…", func() {
+				q.run("transfer.saf.export", object{"payload": object{"kind": "file", "name": profile.Peek() + ".pprof", "mime": "application/octet-stream", "bytes": artifact.Peek()}}, nil)
+			}, signal.Func(func() bool { return q.busy.Get() || artifact.Get() == "" }))), q.feedback()),
 		ryui.Dynamic(func() ryui.Node {
 			var nodes []ryui.Node
 			for _, value := range items.Get() {
 				item := asObject(value)
-				if typeName.Get()!="all" && text(item["kind"])!=typeName.Get(){continue}
+				if typeName.Get() != "all" && text(item["kind"]) != typeName.Get() {
+					continue
+				}
 				id := first(item, "id", "name", "path")
 				args := object{"id": id, "name": id, "kind": first(item, "kind", "type")}
 				nodes = append(nodes, section(nameOf(item), ryui.StaticText(pretty(item), ryui.Style{Font: ryui.Footnote}), actions(
 					button("Read", func() { q.run("reports.read", args, nil) }, q.busy),
-					button("Share", func() { q.run("reports.share", args, func(r reply) { if content := text(asObject(r.value)["data"]); content != "" { ryui.Share(content) } }) }, q.busy),
+					button("Share", func() {
+						q.run("reports.share", args, func(r reply) {
+							if content := text(asObject(r.value)["data"]); content != "" {
+								ryui.Share(content)
+							}
+						})
+					}, q.busy),
 					button("Delete", func() { confirm("Delete report?", func() { q.run("reports.delete", args, func(reply) { refresh() }) }) }, q.busy))))
 			}
 			return ryui.Column(ryui.Style{Gap: 10}, nodes...)

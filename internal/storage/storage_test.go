@@ -61,8 +61,8 @@ func TestSourcesRemainRawAndUnknownFieldsSurvive(t *testing.T) {
 	}
 	if err := store.Update(func(doc map[string]any) error {
 		doc["sources"] = []any{map[string]any{
-			"kind": "server",
-			"id": "one",
+			"kind":                "server",
+			"id":                  "one",
 			"future_record_field": map[string]any{"value": true},
 		}}
 		return nil
@@ -105,9 +105,13 @@ func TestCacheUsesStableHashAndSeparateDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 2 { t.Fatalf("unexpected cache layout: %#v", entries) }
+	if len(entries) != 2 {
+		t.Fatalf("unexpected cache layout: %#v", entries)
+	}
 	for _, entry := range entries {
-		if len(entry.Name()) >= 64 { return }
+		if len(entry.Name()) >= 64 {
+			return
+		}
 	}
 	t.Fatalf("cache body key is not SHA-256 named: %#v", entries)
 }
@@ -118,49 +122,85 @@ func TestLegacyMigrationRetainsUnknownFieldsWhenComplete(t *testing.T) {
 			"type": "user", "id": "server-1", "raw_body": "vless://example",
 			"future": "must remain",
 		}},
-		"custom_rules": []any{map[string]any{"kind": "json", "json": `{"outbound":"direct"}`}},
-		"dns_options": map[string]any{"servers": []any{}, "rules": []any{}},
+		"custom_rules":     []any{map[string]any{"kind": "json", "json": `{"outbound":"direct"}`}},
+		"dns_options":      map[string]any{"servers": []any{}, "rules": []any{}},
 		"future_top_level": map[string]any{"x": 1},
 	}
 	got, report, err := MigrateDocumentWithOptions(input, MigrationOptions{})
-	if err != nil { t.Fatal(err) }
-	if !report.Migrated || report.ReadOnly { t.Fatalf("migration report = %#v", report) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Migrated || report.ReadOnly {
+		t.Fatalf("migration report = %#v", report)
+	}
 	for _, key := range []string{"future_top_level", "sources", "rules", "dns", "storage_version"} {
-		if _, ok := got[key]; !ok { t.Fatalf("migration failed to produce %q", key) }
+		if _, ok := got[key]; !ok {
+			t.Fatalf("migration failed to produce %q", key)
+		}
 	}
 	for _, key := range []string{"server_lists", "custom_rules", "dns_options"} {
-		if _, ok := got[key]; ok { t.Fatalf("legacy key %q was not normalized away", key) }
+		if _, ok := got[key]; ok {
+			t.Fatalf("legacy key %q was not normalized away", key)
+		}
 	}
 	server := got["sources"].([]any)[0].(map[string]any)
-	if server["future"] != "must remain" { t.Fatal("unknown legacy record field was dropped") }
+	if server["future"] != "must remain" {
+		t.Fatal("unknown legacy record field was dropped")
+	}
 }
 
 func TestLegacyMigrationWithoutNodeLinkIsReadOnlyAndUnchanged(t *testing.T) {
-	input := map[string]any{"chains": []any{map[string]any{"tag":"chain", "order":0, "enabled":true, "hops":[]any{"node-a"}}}}
+	input := map[string]any{"chains": []any{map[string]any{"tag": "chain", "order": 0, "enabled": true, "hops": []any{"node-a"}}}}
 	got, report, err := MigrateDocumentWithOptions(input, MigrationOptions{})
-	if err != nil { t.Fatal(err) }
-	if !report.ReadOnly || report.Migrated { t.Fatalf("report = %#v", report) }
-	if _, exists := got["storage_version"]; exists { t.Fatal("read-only migration wrote storage_version") }
-	if _, exists := got["chains"]; !exists { t.Fatal("read-only migration changed the original document") }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.ReadOnly || report.Migrated {
+		t.Fatalf("report = %#v", report)
+	}
+	if _, exists := got["storage_version"]; exists {
+		t.Fatal("read-only migration wrote storage_version")
+	}
+	if _, exists := got["chains"]; !exists {
+		t.Fatal("read-only migration changed the original document")
+	}
 }
 
 func TestVersionedDocumentWithLegacyKeysIsReadOnly(t *testing.T) {
-	input := map[string]any{"storage_version":1, "sources":[]any{map[string]any{"kind":"server"}}, "server_lists":[]any{}}
+	input := map[string]any{"storage_version": 1, "sources": []any{map[string]any{"kind": "server"}}, "server_lists": []any{}}
 	got, report, err := MigrateDocumentWithOptions(input, MigrationOptions{})
-	if err != nil { t.Fatal(err) }
-	if !report.ReadOnly || got["sources"].([]any)[0].(map[string]any)["kind"] != "server" { t.Fatalf("unexpected conflict handling: %#v %#v",got,report) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.ReadOnly || got["sources"].([]any)[0].(map[string]any)["kind"] != "server" {
+		t.Fatalf("unexpected conflict handling: %#v %#v", got, report)
+	}
 }
 
 func TestOpenLegacyDocumentDoesNotRewriteAndBlocksUpdates(t *testing.T) {
 	dir := t.TempDir()
 	original := []byte(`{"server_lists":[],"future":{"x":1}}`)
 	path := filepath.Join(dir, SettingsFileName)
-	if err := os.WriteFile(path, original, 0o600); err != nil { t.Fatal(err) }
-	store, err := Open(dir); if err != nil { t.Fatal(err) }
-	if !store.MigrationStatus().ReadOnly { t.Fatal("legacy document should be read-only until migration completes") }
-	if err := store.Update(func(doc map[string]any) error { doc["x"] = true; return nil }); !errors.Is(err, ErrReadOnly) { t.Fatalf("Update error = %v",err) }
-	after, err := os.ReadFile(path); if err != nil { t.Fatal(err) }
-	if string(after) != string(original) { t.Fatal("Open rewrote legacy settings") }
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !store.MigrationStatus().ReadOnly {
+		t.Fatal("legacy document should be read-only until migration completes")
+	}
+	if err := store.Update(func(doc map[string]any) error { doc["x"] = true; return nil }); !errors.Is(err, ErrReadOnly) {
+		t.Fatalf("Update error = %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(original) {
+		t.Fatal("Open rewrote legacy settings")
+	}
 }
 
 func TestWorkspaceManifestPreservesUnknownFields(t *testing.T) {

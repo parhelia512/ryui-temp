@@ -77,7 +77,10 @@ func TestTaildropPlatformReaderOwnershipAndEOF(t *testing.T) {
 			if callCtx != ctx {
 				t.Fatal("reader did not use caller context")
 			}
-			var args struct { Handle string `json:"handle"`; MaxBytes int `json:"maxBytes"` }
+			var args struct {
+				Handle   string `json:"handle"`
+				MaxBytes int    `json:"maxBytes"`
+			}
 			if err := json.Unmarshal(raw, &args); err != nil || args.Handle != "owned-handle" || args.MaxBytes > taildropIOChunkSize {
 				t.Fatalf("bad read arguments %s: %v", raw, err)
 			}
@@ -102,8 +105,12 @@ func TestTaildropPlatformReaderOwnershipAndEOF(t *testing.T) {
 	if _, err := source.reader.Read(buf); !errors.Is(err, io.EOF) {
 		t.Fatalf("final chunk EOF was lost: %v", err)
 	}
-	if err := source.reader.Close(); err != nil { t.Fatal(err) }
-	if err := source.reader.Close(); err != nil { t.Fatal(err) }
+	if err := source.reader.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := source.reader.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if reads != 1 || closes != 1 {
 		t.Fatalf("reads=%d closes=%d, want one of each", reads, closes)
 	}
@@ -125,13 +132,17 @@ func TestTaildropFinishRequiresAllFiles(t *testing.T) {
 	result := &taildropSendResult{done: make(chan struct{}), completed: make(map[int32]int64)}
 	handler := &taildropSendHandler{result: result, files: []taildropSource{{size: 5}}}
 	handler.OnFinish("")
-	if result.err == "" { t.Fatal("premature stream EOF reported success") }
+	if result.err == "" {
+		t.Fatal("premature stream EOF reported success")
+	}
 
 	result = &taildropSendResult{done: make(chan struct{}), completed: make(map[int32]int64)}
 	handler = &taildropSendHandler{result: result, files: []taildropSource{{size: 5}}}
 	handler.OnFileCompleted(0, 5)
 	handler.OnFinish("")
-	if result.err != "" { t.Fatal(result.err) }
+	if result.err != "" {
+		t.Fatal(result.err)
+	}
 }
 
 func TestTaildropValidationDoesNotFakeSuccess(t *testing.T) {

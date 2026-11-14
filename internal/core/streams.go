@@ -1,24 +1,181 @@
 package core
 
 import (
-    "sync"
-    "github.com/sagernet/sing-box/experimental/libbox"
+	"github.com/sagernet/sing-box/experimental/libbox"
+	"sync"
 )
 
-type streamSnapshot struct { mu sync.RWMutex; status *libbox.StatusMessage; logs []map[string]any; connections map[string]*libbox.Connection }
-type commandStreamHandler struct { owner *Controller; scope string; snapshot *streamSnapshot }
-func(h *commandStreamHandler)Connected(){}
-func(h *commandStreamHandler)Disconnected(msg string){h.owner.emitClient(h.scope,"core.stream.error",map[string]any{"message":msg})}
-func(h *commandStreamHandler)SetDefaultLogLevel(level int32){h.owner.emitClient(h.scope,"core.logs.level",map[string]any{"level":level})}
-func(h *commandStreamHandler)ClearLogs(){h.snapshot.mu.Lock();h.snapshot.logs=nil;h.snapshot.mu.Unlock();h.owner.emitClient(h.scope,"core.logs.clear",map[string]any{})}
-func(h *commandStreamHandler)WriteLogs(it libbox.LogIterator){batch:=[]any{};h.snapshot.mu.Lock();for it!=nil&&it.HasNext(){v:=it.Next();if v!=nil{item:=map[string]any{"level":v.Level,"message":v.Message};h.snapshot.logs=append(h.snapshot.logs,item);batch=append(batch,item)}};if len(h.snapshot.logs)>512{h.snapshot.logs=h.snapshot.logs[len(h.snapshot.logs)-512:]};h.snapshot.mu.Unlock();h.owner.emitClient(h.scope,"core.logs",batch)}
-func(h *commandStreamHandler)WriteStatus(v *libbox.StatusMessage){if v==nil{return};copy:=*v;h.snapshot.mu.Lock();h.snapshot.status=&copy;h.snapshot.mu.Unlock();h.owner.emitClient(h.scope,"core.status",&copy)}
-func(h *commandStreamHandler)WriteGroups(v libbox.OutboundGroupIterator){h.owner.emitClient(h.scope,"core.groups",groupsJSONValue(v))}
-func(h *commandStreamHandler)WriteOutbounds(v libbox.OutboundGroupItemIterator){h.owner.emitClient(h.scope,"core.outbounds",outboundsJSONValue(v))}
-func(h *commandStreamHandler)InitializeClashMode(modes libbox.StringIterator,current string){h.owner.emitClient(h.scope,"core.clashMode",map[string]any{"modes":libboxStrings(modes),"current":current})}
-func(h *commandStreamHandler)UpdateClashMode(mode string){h.owner.emitClient(h.scope,"core.clashMode",map[string]any{"current":mode})}
-func(h *commandStreamHandler)WriteConnectionEvents(events *libbox.ConnectionEvents){batch:=[]any{};h.snapshot.mu.Lock();if events!=nil{if events.Reset{h.snapshot.connections=map[string]*libbox.Connection{}};it:=events.Iterator();for it!=nil&&it.HasNext(){e:=it.Next();if e==nil{continue};row:=map[string]any{"type":e.Type,"id":e.ID,"uplinkDelta":e.UplinkDelta,"downlinkDelta":e.DownlinkDelta,"closedAt":e.ClosedAt};switch e.Type{case libbox.ConnectionEventNew:if e.Connection!=nil{copy:=*e.Connection;h.snapshot.connections[e.ID]=&copy};case libbox.ConnectionEventUpdate:if old:=h.snapshot.connections[e.ID];old!=nil{old.Uplink=e.UplinkDelta;old.Downlink=e.DownlinkDelta;old.UplinkTotal+=e.UplinkDelta;old.DownlinkTotal+=e.DownlinkDelta};case libbox.ConnectionEventClosed:if e.Connection!=nil{copy:=*e.Connection;copy.ClosedAt=e.ClosedAt;copy.Uplink=0;copy.Downlink=0;h.snapshot.connections[e.ID]=&copy}else if old:=h.snapshot.connections[e.ID];old!=nil{old.ClosedAt=e.ClosedAt;old.Uplink=0;old.Downlink=0}};if e.Connection!=nil{row["connection"]=connectionJSON(e.Connection)};batch=append(batch,row)}};h.snapshot.mu.Unlock();h.owner.emitClient(h.scope,"core.connections",map[string]any{"reset":events!=nil&&events.Reset,"events":batch})}
-func(h *commandStreamHandler)WriteDNSQuery(v *libbox.DnsQuery){if v==nil{return};answers:=[]any{};ai:=v.Answers();for ai!=nil&&ai.HasNext(){a:=ai.Next();if a!=nil{answers=append(answers,map[string]any{"name":a.Name,"type":a.Type,"rdata":a.RData,"ttl":a.TTL})}};attempts:=[]any{};ti:=v.Attempts();for ti!=nil&&ti.HasNext(){a:=ti.Next();if a!=nil{attempts=append(attempts,map[string]any{"server":a.Server,"serverType":a.ServerType,"outcome":a.Outcome,"rttMs":a.RTTMs})}};h.owner.emitClient(h.scope,"core.dns",map[string]any{"domain":v.Domain,"queryType":v.QueryType,"rcode":v.Rcode,"ttl":v.TTL,"source":v.Source,"failed":v.Failed,"error":v.Error,"dnsServer":v.DNSServer,"dnsServerType":v.DNSServerType,"fanned":v.Fanned,"survival":v.Survival,"answers":answers,"outbound":libboxStrings(v.Outbound()),"groupPath":libboxStrings(v.GroupPath()),"attempts":attempts})}
-func connectionJSON(c *libbox.Connection)any{if c==nil{return nil};var process any;if p:=c.ProcessInfo;p!=nil{process=map[string]any{"processId":p.ProcessID,"userId":p.UserID,"userName":p.UserName,"processPath":p.ProcessPath,"packageNames":libboxStrings(p.PackageNames())}};return map[string]any{"id":c.ID,"inbound":c.Inbound,"inboundType":c.InboundType,"ipVersion":c.IPVersion,"network":c.Network,"source":c.Source,"destination":c.Destination,"displayDestination":c.DisplayDestination(),"domain":c.Domain,"protocol":c.Protocol,"user":c.User,"fromOutbound":c.FromOutbound,"createdAt":c.CreatedAt,"closedAt":c.ClosedAt,"uplink":c.Uplink,"downlink":c.Downlink,"uplinkTotal":c.UplinkTotal,"downlinkTotal":c.DownlinkTotal,"rule":c.Rule,"outbound":c.Outbound,"outboundType":c.OutboundType,"chain":libboxStrings(c.Chain()),"detour":libboxStrings(c.Detour()),"processInfo":process}}
-func groupsJSONValue(it libbox.OutboundGroupIterator)any{out:=[]any{};for it!=nil&&it.HasNext(){g:=it.Next();if g==nil{continue};items:=[]any{};ii:=g.GetItems();for ii!=nil&&ii.HasNext(){v:=ii.Next();if v!=nil{items=append(items,itemJSON(v))}};out=append(out,map[string]any{"tag":g.Tag,"type":g.Type,"selectable":g.Selectable,"selected":g.Selected,"isExpand":g.IsExpand,"items":items})};return out}
-func outboundsJSONValue(it libbox.OutboundGroupItemIterator)any{out:=[]any{};for it!=nil&&it.HasNext(){v:=it.Next();if v!=nil{out=append(out,itemJSON(v))}};return out}
+type streamSnapshot struct {
+	mu          sync.RWMutex
+	status      *libbox.StatusMessage
+	logs        []map[string]any
+	connections map[string]*libbox.Connection
+}
+type commandStreamHandler struct {
+	owner    *Controller
+	scope    string
+	snapshot *streamSnapshot
+}
+
+func (h *commandStreamHandler) Connected() {}
+func (h *commandStreamHandler) Disconnected(msg string) {
+	h.owner.emitClient(h.scope, "core.stream.error", map[string]any{"message": msg})
+}
+func (h *commandStreamHandler) SetDefaultLogLevel(level int32) {
+	h.owner.emitClient(h.scope, "core.logs.level", map[string]any{"level": level})
+}
+func (h *commandStreamHandler) ClearLogs() {
+	h.snapshot.mu.Lock()
+	h.snapshot.logs = nil
+	h.snapshot.mu.Unlock()
+	h.owner.emitClient(h.scope, "core.logs.clear", map[string]any{})
+}
+func (h *commandStreamHandler) WriteLogs(it libbox.LogIterator) {
+	batch := []any{}
+	h.snapshot.mu.Lock()
+	for it != nil && it.HasNext() {
+		v := it.Next()
+		if v != nil {
+			item := map[string]any{"level": v.Level, "message": v.Message}
+			h.snapshot.logs = append(h.snapshot.logs, item)
+			batch = append(batch, item)
+		}
+	}
+	if len(h.snapshot.logs) > 512 {
+		h.snapshot.logs = h.snapshot.logs[len(h.snapshot.logs)-512:]
+	}
+	h.snapshot.mu.Unlock()
+	h.owner.emitClient(h.scope, "core.logs", batch)
+}
+func (h *commandStreamHandler) WriteStatus(v *libbox.StatusMessage) {
+	if v == nil {
+		return
+	}
+	copy := *v
+	h.snapshot.mu.Lock()
+	h.snapshot.status = &copy
+	h.snapshot.mu.Unlock()
+	h.owner.emitClient(h.scope, "core.status", &copy)
+}
+func (h *commandStreamHandler) WriteGroups(v libbox.OutboundGroupIterator) {
+	h.owner.emitClient(h.scope, "core.groups", groupsJSONValue(v))
+}
+func (h *commandStreamHandler) WriteOutbounds(v libbox.OutboundGroupItemIterator) {
+	h.owner.emitClient(h.scope, "core.outbounds", outboundsJSONValue(v))
+}
+func (h *commandStreamHandler) InitializeClashMode(modes libbox.StringIterator, current string) {
+	h.owner.emitClient(h.scope, "core.clashMode", map[string]any{"modes": libboxStrings(modes), "current": current})
+}
+func (h *commandStreamHandler) UpdateClashMode(mode string) {
+	h.owner.emitClient(h.scope, "core.clashMode", map[string]any{"current": mode})
+}
+func (h *commandStreamHandler) WriteConnectionEvents(events *libbox.ConnectionEvents) {
+	batch := []any{}
+	h.snapshot.mu.Lock()
+	if events != nil {
+		if events.Reset {
+			h.snapshot.connections = map[string]*libbox.Connection{}
+		}
+		it := events.Iterator()
+		for it != nil && it.HasNext() {
+			e := it.Next()
+			if e == nil {
+				continue
+			}
+			row := map[string]any{"type": e.Type, "id": e.ID, "uplinkDelta": e.UplinkDelta, "downlinkDelta": e.DownlinkDelta, "closedAt": e.ClosedAt}
+			switch e.Type {
+			case libbox.ConnectionEventNew:
+				if e.Connection != nil {
+					copy := *e.Connection
+					h.snapshot.connections[e.ID] = &copy
+				}
+			case libbox.ConnectionEventUpdate:
+				if old := h.snapshot.connections[e.ID]; old != nil {
+					old.Uplink = e.UplinkDelta
+					old.Downlink = e.DownlinkDelta
+					old.UplinkTotal += e.UplinkDelta
+					old.DownlinkTotal += e.DownlinkDelta
+				}
+			case libbox.ConnectionEventClosed:
+				if e.Connection != nil {
+					copy := *e.Connection
+					copy.ClosedAt = e.ClosedAt
+					copy.Uplink = 0
+					copy.Downlink = 0
+					h.snapshot.connections[e.ID] = &copy
+				} else if old := h.snapshot.connections[e.ID]; old != nil {
+					old.ClosedAt = e.ClosedAt
+					old.Uplink = 0
+					old.Downlink = 0
+				}
+			}
+			if e.Connection != nil {
+				row["connection"] = connectionJSON(e.Connection)
+			}
+			batch = append(batch, row)
+		}
+	}
+	h.snapshot.mu.Unlock()
+	h.owner.emitClient(h.scope, "core.connections", map[string]any{"reset": events != nil && events.Reset, "events": batch})
+}
+func (h *commandStreamHandler) WriteDNSQuery(v *libbox.DnsQuery) {
+	if v == nil {
+		return
+	}
+	answers := []any{}
+	ai := v.Answers()
+	for ai != nil && ai.HasNext() {
+		a := ai.Next()
+		if a != nil {
+			answers = append(answers, map[string]any{"name": a.Name, "type": a.Type, "rdata": a.RData, "ttl": a.TTL})
+		}
+	}
+	attempts := []any{}
+	ti := v.Attempts()
+	for ti != nil && ti.HasNext() {
+		a := ti.Next()
+		if a != nil {
+			attempts = append(attempts, map[string]any{"server": a.Server, "serverType": a.ServerType, "outcome": a.Outcome, "rttMs": a.RTTMs})
+		}
+	}
+	h.owner.emitClient(h.scope, "core.dns", map[string]any{"domain": v.Domain, "queryType": v.QueryType, "rcode": v.Rcode, "ttl": v.TTL, "source": v.Source, "failed": v.Failed, "error": v.Error, "dnsServer": v.DNSServer, "dnsServerType": v.DNSServerType, "fanned": v.Fanned, "survival": v.Survival, "answers": answers, "outbound": libboxStrings(v.Outbound()), "groupPath": libboxStrings(v.GroupPath()), "attempts": attempts})
+}
+func connectionJSON(c *libbox.Connection) any {
+	if c == nil {
+		return nil
+	}
+	var process any
+	if p := c.ProcessInfo; p != nil {
+		process = map[string]any{"processId": p.ProcessID, "userId": p.UserID, "userName": p.UserName, "processPath": p.ProcessPath, "packageNames": libboxStrings(p.PackageNames())}
+	}
+	return map[string]any{"id": c.ID, "inbound": c.Inbound, "inboundType": c.InboundType, "ipVersion": c.IPVersion, "network": c.Network, "source": c.Source, "destination": c.Destination, "displayDestination": c.DisplayDestination(), "domain": c.Domain, "protocol": c.Protocol, "user": c.User, "fromOutbound": c.FromOutbound, "createdAt": c.CreatedAt, "closedAt": c.ClosedAt, "uplink": c.Uplink, "downlink": c.Downlink, "uplinkTotal": c.UplinkTotal, "downlinkTotal": c.DownlinkTotal, "rule": c.Rule, "outbound": c.Outbound, "outboundType": c.OutboundType, "chain": libboxStrings(c.Chain()), "detour": libboxStrings(c.Detour()), "processInfo": process}
+}
+func groupsJSONValue(it libbox.OutboundGroupIterator) any {
+	out := []any{}
+	for it != nil && it.HasNext() {
+		g := it.Next()
+		if g == nil {
+			continue
+		}
+		items := []any{}
+		ii := g.GetItems()
+		for ii != nil && ii.HasNext() {
+			v := ii.Next()
+			if v != nil {
+				items = append(items, itemJSON(v))
+			}
+		}
+		out = append(out, map[string]any{"tag": g.Tag, "type": g.Type, "selectable": g.Selectable, "selected": g.Selected, "isExpand": g.IsExpand, "items": items})
+	}
+	return out
+}
+func outboundsJSONValue(it libbox.OutboundGroupItemIterator) any {
+	out := []any{}
+	for it != nil && it.HasNext() {
+		v := it.Next()
+		if v != nil {
+			out = append(out, itemJSON(v))
+		}
+	}
+	return out
+}
