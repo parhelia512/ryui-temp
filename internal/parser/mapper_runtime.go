@@ -12,16 +12,17 @@ import (
 )
 
 type mapperInput struct {
-	root   map[string]any
-	query  map[string][]string
-	scheme string
-	host   string
-	port   any
-	path   string
-	frag   string
-	user   string
-	base   map[string]any
-	form   string
+	root      map[string]any
+	query     map[string][]string
+	scheme    string
+	host      string
+	port      any
+	path      string
+	frag      string
+	user      string
+	userParts []string
+	base      map[string]any
+	form      string
 }
 
 type mapperState struct {
@@ -212,6 +213,10 @@ func executeMapper(state *mapperState, protocol *registryProtocol, dialect strin
 	}
 	if schemeSets, ok := protocol.schemeSets[state.input.scheme].(map[string]any); ok {
 		for k, v := range schemeSets {
+			if k == "$default_port" {
+				state.input.port = intValue(v)
+				continue
+			}
 			setPath(state.entry, k, cloneValue(v))
 		}
 	}
@@ -277,9 +282,9 @@ func executeRecords(state *mapperState, section map[string]any, orders map[strin
 				}
 			}
 			if !found {
-				if defaults, ok := record["default_when"].(map[string]any); ok {
-					if absent, isBool := defaults["absent"].(bool); isBool && absent {
-						v, found = defaults["value"], true
+				if materialize, ok := record["materialize_default"].(bool); ok && materialize {
+					if defaultValue, exists := record["default"]; exists {
+						v, found = defaultValue, true
 					}
 				}
 			}
@@ -370,8 +375,19 @@ func getSourcePath(pathName string, state mapperState) (any, bool) {
 	if pathName == "path" {
 		return state.input.path, state.input.path != ""
 	}
-	if pathName == "userinfo" {
-		return state.input.user, state.input.user != ""
+	if strings.HasPrefix(pathName, "userinfo.") {
+		parts := strings.SplitN(state.input.user, ":", 2)
+		switch strings.TrimPrefix(pathName, "userinfo.") {
+		case "user":
+			if len(parts) > 0 && parts[0] != "" {
+				return parts[0], true
+			}
+		case "pass":
+			if len(parts) == 2 {
+				return parts[1], true
+			}
+		}
+		return nil, false
 	}
 	if strings.HasPrefix(pathName, "json.$base.") {
 		return getPath(state.input.base, strings.TrimPrefix(pathName, "json.$base."))
@@ -501,6 +517,13 @@ func coerceMapperValue(v any, record map[string]any, reg *registry) any {
 			v = strings.TrimSpace(s)
 		case "trim_lower":
 			v = strings.ToLower(strings.TrimSpace(s))
+		case "duration", "duration_bare_seconds":
+			trimmed := strings.TrimSpace(s)
+			if trimmed != "" && isBareNumber(trimmed) {
+				v = trimmed + "s"
+			} else {
+				v = trimmed
+			}
 		}
 	}
 	if vm, ok := record["value_map"].(map[string]any); ok {
@@ -531,6 +554,17 @@ func coerceMapperValue(v any, record map[string]any, reg *registry) any {
 		}
 	}
 	return v
+}
+func isBareNumber(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 func isTrueSpelled(v any) bool {
 	switch strings.ToLower(strings.TrimSpace(stringValue(v))) {
