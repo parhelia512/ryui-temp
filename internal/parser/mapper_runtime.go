@@ -518,8 +518,7 @@ func resolveMapperPlaceholders(value any, state *mapperState) any {
 
 func buildMapperPlan(state *mapperState, protocol *registryProtocol, dialect string, mapper map[string]any) []mapperRecord {
 	var plan []mapperRecord
-	includes := stringSlice(mapper["include"])
-	for _, inc := range includes {
+	for _, inc := range stringSlice(mapper["include"]) {
 		parts := strings.SplitN(inc, "#", 2)
 		if len(parts) != 2 {
 			continue
@@ -530,18 +529,50 @@ func buildMapperPlan(state *mapperState, protocol *registryProtocol, dialect str
 		}
 		blocks, _ := shared["blocks"].(map[string]any)
 		block, _ := blocks[parts[1]].(map[string]any)
-		if block == nil {
-			continue
+		if block != nil {
+			collectMapperPlan(block, state.reg.sharedOrder[parts[0]], "blocks."+parts[1], &plan)
 		}
-		collectMapperPlan(block, state.reg.sharedOrder[parts[0]], "blocks."+parts[1], &plan)
 	}
 	collectMapperPlan(mapper, protocol.order, "mappers."+dialect, &plan)
 	return plan
 }
 
+func sourceList(value any) []string {
+	switch typed := value.(type) {
+	case string:
+		return []string{typed}
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text, ok := item.(string); ok {
+				out = append(out, text)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func orderedKeys(section map[string]any, order []string) []string {
+	keys := make([]string, 0, len(section))
+	seen := make(map[string]bool, len(section))
+	for _, key := range order {
+		if _, ok := section[key]; ok && !seen[key] {
+			keys = append(keys, key)
+			seen[key] = true
+		}
+	}
+	for key := range section {
+		if !seen[key] {
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}
+
 func collectMapperPlan(section map[string]any, orders map[string][]string, pathName string, plan *[]mapperRecord) {
-	keys := orderedKeys(section, orders[pathName])
-	for _, key := range keys {
+	for _, key := range orderedKeys(section, orders[pathName]) {
 		switch key {
 		case "include", "defaults", "detect", "forms", "body_source", "unknown_key", "emit", "overlays", "note", "params", "label":
 			continue
@@ -568,31 +599,55 @@ func collectMapperPlan(section map[string]any, orders map[string][]string, pathN
 	}
 }
 
+func getPath(root map[string]any, pathName string) (any, bool) {
+	if root == nil {
+		return nil, false
+	}
+	var current any = root
+	for _, part := range strings.Split(strings.TrimPrefix(pathName, "."), ".") {
+		if index, err := strconv.Atoi(part); err == nil {
+			list, ok := current.([]any)
+			if !ok || index < 0 || index >= len(list) {
+				return nil, false
+			}
+			current = list[index]
+			continue
+		}
+		object, ok := current.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		value, ok := object[part]
+		if !ok {
+			return nil, false
+		}
+		current = value
+	}
+	return current, true
+}
+
 func evaluateMapperRecord(state *mapperState, record map[string]any) {
 	if !conditionMatches(record["when"], state) {
 		return
 	}
 	source, hasSource := record["source"]
 	if !hasSource {
-		if implies, ok := record["implies"].(map[string]any); ok {
-			applyMapperImplies(state, implies)
-		}
+		applyMapperImplies(state, record["implies"])
 		return
 	}
-	candidates := sourceCandidates(source, state)
 	onInvalid, _ := record["on_invalid"].(map[string]any)
 	invalidSeen := false
-	var chosen any
+	var chosen, rawLast any
 	found := false
-	var rawLast any
-	for _, candidate := range candidates {
+	for _, candidate := range sourceCandidates(source, state) {
 		value, ok := sourceValueOne(candidate, state)
 		if !ok {
 			continue
 		}
 		value = decodeMapperExtra(value, record)
 		if extraction, ok := record["extract"].(map[string]any); ok && !hasSplitInto(record) {
-			extracted, ok := applyMapperExtract(value, extraction, record)
+			var extracted any
+			extracted, ok = applyMapperExtract(state, value, extraction)
 			if !ok {
 				continue
 			}
@@ -612,8 +667,6 @@ func evaluateMapperRecord(state *mapperState, record map[string]any) {
 	if !found {
 		action := stringValue(onInvalid["action"])
 		switch {
-		case invalidSeen && action == "drop":
-			return
 		case invalidSeen && action == "drop_node":
 			state.dropNode = true
 			state.dropReason = stringValue(onInvalid["code"])
@@ -632,15 +685,14 @@ func evaluateMapperRecord(state *mapperState, record map[string]any) {
 	}
 	if !found {
 		if materialize, _ := record["materialize_default"].(bool); materialize {
-			if defaultValue, exists := record["default"]; exists {
-				chosen, found = defaultValue, true
-			} else if defaultWhen, ok := record["default_when"].(map[string]any); ok {
-				if conditionMatches(defaultWhen["when"], state) {
-					chosen, found = defaultWhen["value"], true
-				}
+			if value, ok := record["default"]; ok {
+				chosen, found = value, true
+			} else if defaultWhen, ok := record["default_when"].(map[string]any); ok && conditionMatches(defaultWhen["when"], state) {
+				chosen, found = defaultWhen["value"], true
 			} else if sets, ok := record["sets"].(map[string]any); ok {
-				if _, exists := sets[""]; exists {
-					chosen, found = "", true
+				_, found = sets[""]
+				if found {
+					chosen = ""
 				}
 			}
 		}
@@ -677,10 +729,7 @@ func sourceCandidates(spec any, state *mapperState) []string {
 func sourceValueOne(candidate string, state *mapperState) (any, bool) {
 	switch candidate {
 	case "userinfo":
-		if state.input.user != "" {
-			return state.input.user, true
-		}
-		return nil, false
+		return state.input.user, state.input.user != ""
 	case "host":
 		return state.input.host, state.input.host != ""
 	case "port":
@@ -716,16 +765,13 @@ func getSourcePath(pathName string, state mapperState) (any, bool) {
 	case "$form":
 		return state.input.form, state.input.form != ""
 	case "$type":
-		if value, ok := state.entry["type"]; ok {
-			return value, true
-		}
-		return nil, false
+		return state.entry["type"], state.entry["type"] != nil
 	}
 	if strings.HasPrefix(pathName, "query.") {
 		key := strings.TrimPrefix(pathName, "query.")
-		for k, v := range state.input.query {
-			if strings.EqualFold(k, key) && len(v) > 0 {
-				return v[len(v)-1], true
+		for k, values := range state.input.query {
+			if strings.EqualFold(k, key) && len(values) > 0 {
+				return values[len(values)-1], true
 			}
 		}
 		return nil, false
@@ -734,13 +780,9 @@ func getSourcePath(pathName string, state mapperState) (any, bool) {
 		parts := strings.SplitN(state.input.user, ":", 2)
 		switch strings.TrimPrefix(pathName, "userinfo.") {
 		case "user":
-			if len(parts) > 0 && parts[0] != "" {
-				return parts[0], true
-			}
+			return parts[0], len(parts) > 0 && parts[0] != ""
 		case "pass":
-			if len(parts) == 2 {
-				return parts[1], true
-			}
+			return parts[1], len(parts) == 2
 		}
 		return nil, false
 	}

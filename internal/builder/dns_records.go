@@ -22,10 +22,8 @@ func applyDNSRecords(config, template, settings map[string]any, state *buildStat
 	}
 	dnsRecordApplyRouteMirrors(dns, settings, state)
 	options, _ := template["dns_options"].(map[string]any)
-	if options == nil {
-		dnsRecordApplyRouteMirrors(dns, settings, state)
-		return nil
-	}
+	dnsRecordApplyRouteMirrors(dns, settings, state)
+	return nil
 
 	presetServers, presetRules := dnsRecordPresetDNS(config, template, settings, state)
 	stored, _ := settings["dns"].(map[string]any)
@@ -511,7 +509,7 @@ func dnsRecordExpandPresetBody(preset map[string]any, vars map[string]any, node 
 					continue
 				}
 			} else {
-				state.warn("preset_ruleset_cache_missing", "selectable_rules."+id+".rule_set."+tag, "remote preset rule_set has no offline cache payload", tag)
+				state.fatal("offline_ruleset_missing", "selectable_rules."+id+".rule_set."+tag, "remote preset rule_set has no offline cache payload", tag)
 				continue
 			}
 

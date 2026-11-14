@@ -108,6 +108,10 @@
 
   本轮仅执行 `gofmt`、Python 单测与 `compileall`、`check_migration.py --source-only`，未运行 Go 测试或触发 Actions；golden 结果仍需 CI 复核。
 
+- 最新 Actions 日志暴露了上一轮执行器重写后的两个编译级回归：`orderedKeys`、`sourceList`、`getPath` 辅助函数在局部替换中被误删，以及 `applyMapperExtract` 调用参数未同步。现已整体恢复 mapper 执行器的辅助函数段，保留唯一声明，并使调用匹配当前签名。
+- 同一轮日志中的 builder 回归也已修复：DNS route mirror 只执行一次，避免固定 DNS 规则重复；preset remote rule_set 缺离线缓存恢复为 `offline_ruleset_missing` fatal，与 `TestBuildJSONReportsOfflineRuleSetWithoutNetwork` 契约一致。
+- 本地只执行了指定 gofmt、Python 单测、`compileall` 和 `check_migration.py --source-only`；未运行 Go 测试、编译、Gradle、NDK 或 Actions。
+
 以下内容仍不能宣称与旧 Flutter 应用完全等价：
 
 1. **未执行编译和设备验证。** Go/Gradle/NDK/Actions 都未运行；API 24 安装、VPN 授权、TUN fd、Doze、服务重启、通知和 SAF 仍需 Actions/设备验证。

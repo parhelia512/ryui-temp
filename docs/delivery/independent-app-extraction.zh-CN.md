@@ -94,7 +94,11 @@ wireguard-go、sing-tun、gvisor、utls 子模块由固定 core commit 的 gitli
 - 语料 `entry` 按契约不含 `tag`（标签在 `label` 字段），测试此前直接比较带 `tag` 的 `Emit`，造成大面积假失败；测试现先移除 `tag`/`detour` 再比较，与 Dart 侧 `_canonEntryMap` 一致。
 - mapper 执行器补齐了注册表声明的通用能力：`forms` 形态解码（v2rayN/base64 legacy/SIP002/wrapped）、选择器优先的两遍求值、`defaults`/`scheme_sets`（含 `*` 与 `$default_port`）、`materialize_default`、`on_invalid` 全部动作、`extract`/`split_into`、`merge`、`list`、`value_map.$ref` 前缀表、`normalize` 取值归一化，以及 `body.fields` 的 required/enum/format/pattern/item_pattern/min/max/requires/conflicts/absent_when/forbidden_for/advisory/coerce_when 清洗与降级。布尔 `false` 不再被误判为空值。
 
-本轮只执行 gofmt、Python 单测、`compileall` 与 `check_migration.py --source-only`，未触发 Actions；golden 结果需下一次 Go CI 复核。
+本轮最新 Actions 日志中的 parser 编译失败已修复。原因是 mapper 执行器局部替换时误删 `orderedKeys`、`sourceList`、`getPath`，并留下一个 `applyMapperExtract` 参数不匹配；现已整体恢复唯一辅助函数段并同步调用签名。
+
+同一日志的 builder 回归也已修复：DNS route mirror 的重复调用已删除；preset remote rule_set 缺少离线缓存时恢复为 `offline_ruleset_missing` fatal，保持离线构建契约。
+
+本地仅执行 gofmt、Python 单测、`compileall` 与 `check_migration.py --source-only`，未运行 Go 编译/测试、Gradle、NDK 或 Actions。
 
 仍未运行：
 
