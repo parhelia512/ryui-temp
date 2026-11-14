@@ -89,7 +89,12 @@ common/jni/jni_android.c: JNI_OnLoad -> box_jni_onload
 
 wireguard-go、sing-tun、gvisor、utls 子模块由固定 core commit 的 gitlinks 决定，workflow 使用递归 submodule 初始化，不由 app 独立 pin 或覆盖。实际 submodule SHA 以 `core-submodules.txt` 为准。
 
-最新 Actions 已通过 parser 编译；Go 纯测试仍在 contract URI golden 阶段失败。剩余 AnyTLS/VLESS/HTTP 差异集中在 mapper 默认值 materialization、duration bare seconds、uTLS alias、userinfo user/pass、scheme 默认端口和无效 SNI fallback。本轮已补充这些通用语义并完成 gofmt/Python-only 检查，未触发 Actions；下一次需由 Go CI 验证。
+最新 Actions 已通过 parser 编译；Go 纯测试仍在 contract URI golden 阶段失败。本轮定位到两处根因并修复：
+
+- 语料 `entry` 按契约不含 `tag`（标签在 `label` 字段），测试此前直接比较带 `tag` 的 `Emit`，造成大面积假失败；测试现先移除 `tag`/`detour` 再比较，与 Dart 侧 `_canonEntryMap` 一致。
+- mapper 执行器补齐了注册表声明的通用能力：`forms` 形态解码（v2rayN/base64 legacy/SIP002/wrapped）、选择器优先的两遍求值、`defaults`/`scheme_sets`（含 `*` 与 `$default_port`）、`materialize_default`、`on_invalid` 全部动作、`extract`/`split_into`、`merge`、`list`、`value_map.$ref` 前缀表、`normalize` 取值归一化，以及 `body.fields` 的 required/enum/format/pattern/item_pattern/min/max/requires/conflicts/absent_when/forbidden_for/advisory/coerce_when 清洗与降级。布尔 `false` 不再被误判为空值。
+
+本轮只执行 gofmt、Python 单测、`compileall` 与 `check_migration.py --source-only`，未触发 Actions；golden 结果需下一次 Go CI 复核。
 
 仍未运行：
 

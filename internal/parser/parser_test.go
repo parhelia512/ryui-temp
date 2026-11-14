@@ -66,7 +66,12 @@ func TestParseContractURIGoldens(t *testing.T) {
 				t.Fatalf("node count got %d want %d; diagnostics=%+v", len(result.Nodes), len(expected.Nodes), result.Diagnostics)
 			}
 			for i, want := range expected.Nodes {
-				if got := Emit(result.Nodes[i]); !reflect.DeepEqual(got, want.Entry) {
+				got := Emit(result.Nodes[i])
+				// The corpus "entry" is the emitted body without the two keys
+				// that belong to the call site rather than to the node body.
+				delete(got, "tag")
+				delete(got, "detour")
+				if !reflect.DeepEqual(got, want.Entry) {
 					t.Errorf("entry[%d] mismatch\ngot:  %#v\nwant: %#v", i, got, want.Entry)
 				}
 			}

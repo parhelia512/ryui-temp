@@ -92,7 +92,21 @@
 
 - core 的四个 fork submodule 由锁定的 sing-box-lx commit 中的 gitlinks 决定；Actions 递归初始化，不再从 app workflow 另行覆盖版本。submodule revisions 会记录到 `core-submodules.txt` 和构建 artifact。
 
-- 最新 Actions 已通过 parser 编译，失败仍是 contract URI golden。剩余差异集中在 mapper 语义：`materialize_default`、`duration_bare_seconds`、uTLS fingerprint prefix alias、userinfo.user/pass、scheme `$default_port` 和 AnyTLS SNI invalid fallback。本轮已补充这些通用执行路径并完成 gofmt/Python-only 检查，尚未运行 Go 测试。
+- 本轮日志中编译阶段已通过，只有 `TestParseContractURIGoldens` 失败。根因分两类，均已按注册表通用语义修复：
+
+  1. **测试夹具比较基准错误。** 语料 `entry` 从不含 `tag`（标签在独立 `label` 字段），此前测试直接比较带 `tag` 的 `Emit` 结果，导致几乎所有成功用例都报差异。测试现按语料规范先移除 `tag`/`detour` 再比较，与 Dart 侧 `contract_test.dart` 的 `_canonEntryMap` 语义一致。
+  2. **执行器能力缺口。** 原实现只覆盖 `source/maps_to` 的简化子集，缺少 `forms` 形态解码、`selectors` 分遍求值、`defaults`/`scheme_sets`（含 `*` 通配与 `$default_port`）、`materialize_default`、`on_invalid` 的 drop/drop_node/keep/coerce/default_from、`extract` 与 `split_into`、`merge`（append/keep_first）、`list` 与 `item`/`len`、`value_map.$ref` 前缀表、`normalize` 的 duration/bandwidth/port_range_spec/base64_std/hex_only/cidr_prefix/range_order，以及 `body.fields` 的 required/default_when/enum/format/pattern/item_pattern/min/max/requires/conflicts/absent_when/forbidden_for/advisory/coerce_when 清洗与降级。
+
+  本轮实现要点：
+
+  - 新增 v2rayN/base64-legacy/SIP002/wrapped 形态检测与解码；base64 载荷的 `regex` 检测同时匹配解码后文本。
+  - 选择器记录先于字段记录执行，其余字段两遍求值，保证 `security`/`transport.type` 先建立结构。
+  - 空值判断改为标量感知：布尔 `false` 不再被当作“未设置”而误删 `disable_sni`、`reality.enabled` 等字段。
+  - 端口范围归一化输出 `low:high`，丢弃越界与主机:端口形式的元素。
+  - TLS 共享块按 `body.fields` 校验，REALITY 的 `public_key`/`short_id` 按 format/hex 规则降级，`utls.fingerprint` 前缀表与 `coerce_when` 生效。
+  - 标签回退支持 `{scheme}`、`{server}`、`{server_port}` 与 `scheme_source: as_written`。
+
+  本轮仅执行 `gofmt`、Python 单测与 `compileall`、`check_migration.py --source-only`，未运行 Go 测试或触发 Actions；golden 结果仍需 CI 复核。
 
 以下内容仍不能宣称与旧 Flutter 应用完全等价：
 

@@ -1479,6 +1479,7 @@ type registryProtocol struct {
 	scheme, singboxType string
 	aliases             []string
 	userInto            []string
+	userSingleInto      string
 	userSep             string
 	params              map[string]registryParam
 	raw                 map[string]any
@@ -1562,20 +1563,26 @@ func loadRegistry(fsys fs.FS) (*registry, error) {
 			}
 			loaded++
 			r.byType[p.singboxType] = p
-			if p.scheme != "" {
-				r.byScheme[strings.ToLower(p.scheme)] = p
-			}
-			for _, alias := range p.aliases {
-				r.byScheme[strings.ToLower(alias)] = p
-			}
+			schemes := map[string]bool{}
 			if mapperSections, ok := m["mappers"].(map[string]any); ok {
 				if uri, ok := mapperSections["uri"].(map[string]any); ok {
 					if detect, ok := uri["detect"].(map[string]any); ok {
 						for _, scheme := range stringSlice(detect["scheme_in"]) {
-							r.byScheme[strings.ToLower(scheme)] = p
+							schemes[strings.ToLower(scheme)] = true
 						}
 					}
 				}
+			}
+			if len(schemes) == 0 {
+				if p.scheme != "" {
+					schemes[strings.ToLower(p.scheme)] = true
+				}
+				for _, alias := range p.aliases {
+					schemes[strings.ToLower(alias)] = true
+				}
+			}
+			for scheme := range schemes {
+				r.byScheme[scheme] = p
 			}
 		}
 		if loaded == 0 {
@@ -1669,6 +1676,9 @@ func registryProtocolMetadata(p *registryProtocol, uri map[string]any) {
 					p.userInto = appendUniqueString(p.userInto, s)
 				}
 			}
+		}
+		if single := stringValue(ui["single_into"]); single != "" {
+			p.userSingleInto = single
 		}
 		if split, ok := ui["split"].(map[string]any); ok {
 			if sep := stringValue(split["sep"]); sep != "" {
