@@ -18,6 +18,25 @@ ANDROID_MIN_RE = re.compile(r"(androidMinAPI\s*=\s*\")33(\")")
 MIN_SDK_RE = re.compile(r"(minSdk(?:Version)?\s*[=: ]\s*)33(\b)")
 
 
+def collect_android_diagnostics(source: Path) -> tuple[list[str], list[dict[str, str]]]:
+    android = source / "platform/android"
+    if not android.is_dir():
+        raise RuntimeError(f"missing Android host source: {android}")
+    min_sdk_hits = []
+    api_hits = []
+    for path in sorted(android.rglob("*.kt")):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for match in re.finditer(r"\b(?:LocaleManager|LocaleList|NotificationChannel|RuntimeShader)\b", text):
+            api_hits.append({"file": path.relative_to(source).as_posix(), "token": match.group(0)})
+    for path in sorted(android.rglob("*.gradle*")):
+        if path.is_dir():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if re.search(r"minSdk(?:Version)?\s*[=: ]\s*33\b", text):
+            min_sdk_hits.append(path.relative_to(source).as_posix())
+    return min_sdk_hits, api_hits
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("source", type=Path)
@@ -62,7 +81,7 @@ def main() -> int:
 
     native_kotlin = source / "platform/android/ryui/src/main/java/dev/ryui/RyUINative.kt"
     if not native_kotlin.is_file():
-        candidates = list(source.rglob("RyUINative.kt"))
+        candidates = list((source / "platform/android").rglob("RyUINative.kt"))
         if len(candidates) != 1:
             raise RuntimeError(f"expected one RyUINative.kt, found {len(candidates)}")
         native_kotlin = candidates[0]
@@ -156,16 +175,7 @@ def main() -> int:
     for path, text in changed.items():
         path.write_text(text, encoding="utf-8", newline="\n")
 
-    min_sdk_hits = []
-    api33_hits = []
-    for path in sorted(source.rglob("*.kt")):
-        text = path.read_text(encoding="utf-8", errors="replace")
-        for match in re.finditer(r"\b(?:LocaleManager|LocaleList|NotificationChannel|RuntimeShader)\b", text):
-            api33_hits.append({"file": path.relative_to(source).as_posix(), "token": match.group(0)})
-    for path in sorted(source.rglob("*.gradle*")):
-        text = path.read_text(encoding="utf-8", errors="replace")
-        if re.search(r"minSdk(?:Version)?\s*[=: ]\s*33\b", text):
-            min_sdk_hits.append(path.relative_to(source).as_posix())
+    min_sdk_hits, api33_hits = collect_android_diagnostics(source)
 
     report = {
         "source": "github.com/egoist/ryui",
