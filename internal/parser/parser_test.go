@@ -71,13 +71,54 @@ func TestParseContractURIGoldens(t *testing.T) {
 				// that belong to the call site rather than to the node body.
 				delete(got, "tag")
 				delete(got, "detour")
-				if !reflect.DeepEqual(got, want.Entry) {
-					t.Errorf("entry[%d] mismatch\ngot:  %#v\nwant: %#v", i, got, want.Entry)
+				got = normalizeGoldenNumbers(got).(map[string]any)
+				wantEntry := normalizeGoldenNumbers(want.Entry).(map[string]any)
+				if !reflect.DeepEqual(got, wantEntry) {
+					t.Errorf("entry[%d] mismatch\ngot:  %#v\nwant: %#v", i, got, wantEntry)
 				}
 			}
 		})
 	}
 }
+func normalizeGoldenNumbers(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			out[key] = normalizeGoldenNumbers(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for i, item := range typed {
+			out[i] = normalizeGoldenNumbers(item)
+		}
+		return out
+	case int:
+		return int64(typed)
+	case int8:
+		return int64(typed)
+	case int16:
+		return int64(typed)
+	case int32:
+		return int64(typed)
+	case int64:
+		return typed
+	case float64:
+		if typed == float64(int64(typed)) {
+			return int64(typed)
+		}
+		return typed
+	case json.Number:
+		if integer, err := typed.Int64(); err == nil {
+			return integer
+		}
+		return typed.String()
+	default:
+		return value
+	}
+}
+
 func TestParseFixtureFileShape(t *testing.T) {
 	data, err := os.ReadFile("testdata/ss_subscription.txt")
 	if err != nil {

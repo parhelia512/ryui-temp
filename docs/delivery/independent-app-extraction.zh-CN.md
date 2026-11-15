@@ -98,7 +98,9 @@ wireguard-go、sing-tun、gvisor、utls 子模块由固定 core commit 的 gitli
 
 最新 Actions 又暴露了两个确定性错误：`dns_records.go` 默认 preset 分支的 `record` 作用域错误，以及 HTTP/AnyTLS userinfo 单段密码读取 `parts[1]` 造成 runtime panic；两处均已修复。
 
-本地重新执行 gofmt、Python 单测、`compileall` 与 `check_migration.py --source-only` 均通过，未运行 Go 编译/测试、Gradle、NDK 或 Actions。
+本地 Go 编译验证已启用，使用 `D:\go\bin\go.exe` 与 `GOPATH=d:\gopath`。parser 包已实际编译并运行 golden；builder 编译被临时 core staging 中不完整的 `sing-tun`/`utls` 子模块阻断，缺失 `gtcpip/*` 与 utls 根包属于本地 checkout 问题，CI 仍通过递归 submodule checkout 提供完整依赖，临时 junction 已删除。
+
+本地 gofmt、Python 单测、`compileall` 与 `check_migration.py --source-only` 均通过。
 
 仍未运行：
 
