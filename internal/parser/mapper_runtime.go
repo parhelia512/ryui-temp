@@ -1912,6 +1912,10 @@ func sanitizeMapperFields(state *mapperState, target map[string]any, fields map[
 			}
 		}
 		if values, ok := field["values"].([]any); ok && (typ == "enum" || typ == "alias_enum") && !containsAny(values, value) {
+			if onInvalid := fieldMap(field, "on_invalid"); stringValue(onInvalid["action"]) == "drop" {
+				delete(target, name)
+				continue
+			}
 			if handleMapperInvalid(state, target, name, pathName, field, fieldMap(field, "on_invalid"), value) {
 				continue
 			}
