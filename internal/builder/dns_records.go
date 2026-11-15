@@ -444,6 +444,7 @@ func dnsRecordApplyRouteMirrors(dns map[string]any, settings map[string]any, sta
 func dnsRecordExpandPreset(config map[string]any, preset, record map[string]any, cache CacheInput, state *buildState) dnsRecordPresetParts {
 	parts := dnsRecordPresetParts{}
 	vars := dnsRecordPresetVars(preset, record, state)
+	seededDefault := boolValue(record, "_seeded_default", false)
 	loop, _ := preset["for_each_node"].(map[string]any)
 	loopDo, _ := preset["for_each_node_do"].(map[string]any)
 	if loop != nil {
@@ -452,17 +453,17 @@ func dnsRecordExpandPreset(config map[string]any, preset, record map[string]any,
 				continue
 			}
 			local := dnsRecordVarsForNode(vars, node)
-			parts = dnsRecordMergePresetParts(parts, dnsRecordExpandPresetBody(preset, local, node, cache, state, false))
+			parts = dnsRecordMergePresetParts(parts, dnsRecordExpandPresetBody(preset, local, node, cache, state, false, seededDefault))
 		}
 		return parts
 	}
 	if loopDo != nil {
 		vars = dnsRecordCollectNodeVars(vars, loopDo, config, state)
 	}
-	return dnsRecordMergePresetParts(parts, dnsRecordExpandPresetBody(preset, vars, nil, cache, state, true))
+	return dnsRecordMergePresetParts(parts, dnsRecordExpandPresetBody(preset, vars, nil, cache, state, true, seededDefault))
 }
 
-func dnsRecordExpandPresetBody(preset map[string]any, vars map[string]any, node map[string]any, cache CacheInput, state *buildState, namespace bool) dnsRecordPresetParts {
+func dnsRecordExpandPresetBody(preset map[string]any, vars map[string]any, node map[string]any, cache CacheInput, state *buildState, namespace bool, seededDefault bool) dnsRecordPresetParts {
 	parts := dnsRecordPresetParts{}
 	for _, item := range dnsRecordExpandedList(preset["dns_servers"], vars, node, state) {
 		if item["tag"] == nil {
@@ -510,7 +511,7 @@ func dnsRecordExpandPresetBody(preset map[string]any, vars map[string]any, node 
 					continue
 				}
 			} else {
-				if boolValue(record, "_seeded_default", false) {
+				if seededDefault {
 					state.warn("preset_ruleset_cache_missing", "selectable_rules."+id+".rule_set."+tag, "default remote preset rule_set has no offline cache payload and was skipped", tag)
 					continue
 				}

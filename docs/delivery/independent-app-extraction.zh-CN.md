@@ -98,9 +98,9 @@ wireguard-go、sing-tun、gvisor、utls 子模块由固定 core commit 的 gitli
 
 最新 Actions 又暴露了两个确定性错误：`dns_records.go` 默认 preset 分支的 `record` 作用域错误，以及 HTTP/AnyTLS userinfo 单段密码读取 `parts[1]` 造成 runtime panic；两处均已修复。
 
-最新 Actions 中 builder 的编译阻断点为 `dns_records.go:513 undefined: record`，已移除错误作用域引用并恢复显式 `offline_ruleset_missing` 分支；parser 已通过编译并进入 golden 阶段。
+最新 Actions 仍报告 `dns_records.go:513 undefined: record`；现已将默认 seeded 状态作为显式布尔参数从 `dnsRecordExpandPreset` 传入 `dnsRecordExpandPresetBody`，移除错误作用域依赖。parser 没有新的编译错误，golden 剩余集中于 headers、Hysteria port/obfs、MASQUE nested required 及更深层 transport/body 语义。
 
-本地 Go 验证使用 `D:\go\bin\go.exe`、`GOPATH=d:\gopath`，parser 可实际编译运行；builder 因本地 core staging 的 sing-tun/utls 子模块不完整无法完成依赖解析，临时 junction 已删除。gofmt、Python 单测、compileall 与 source-only migration check 均通过。
+本地 gofmt、Python 单测、compileall 与 source-only migration check 均通过。
 
 仍未运行：
 

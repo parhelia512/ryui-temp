@@ -109,8 +109,8 @@
   本轮仅执行 `gofmt`、Python 单测与 `compileall`、`check_migration.py --source-only`，未运行 Go 测试或触发 Actions；golden 结果仍需 CI 复核。
 
 - 最新 Actions 再次确认 parser 已通过编译，但 contract golden 暴露出 mapper 计划构建时跳过整个 `params` 节点，导致只应用 `defaults`：server、端口、userinfo、TLS、transport 和协议参数全部丢失。现已恢复 `params` 递归收集；同时修复 `applyMapperExtract` 调用签名和 parser 辅助函数段。
-- 最新 Actions 日志中的 builder 编译阻断点为 `dns_records.go:513 undefined: record`，已移除该错误作用域引用，恢复为显式 `offline_ruleset_missing` 分支。parser 当前已进入 golden 阶段，未出现新的 Go 编译错误。
-- 允许本地 Go 验证后，已使用 `D:\go\bin\go.exe` 与 `GOPATH=d:\gopath` 实际编译 parser 并运行 golden；builder 因本地 core staging 的 sing-tun/utls 子模块不完整无法完成依赖解析，临时 junction 已删除。
+- 最新 Actions 仍报告 `dns_records.go:513 undefined: record`，根因是默认 seeded 状态在 `dnsRecordExpandPresetBody` 中错误引用外层局部变量。现已将 `_seeded_default` 转为 `dnsRecordExpandPreset` 的显式布尔参数并传入 body expansion，彻底移除该作用域依赖。
+- parser 当前没有编译错误；golden 剩余集中在 headers、Hysteria port/obfs、MASQUE nested required、SOCKS/Trojan/VLESS/WireGuard 的更深层 transport/body 语义。
 - 本地 gofmt、Python 单测、compileall、source-only migration check 均通过。
 
 以下内容仍不能宣称与旧 Flutter 应用完全等价：
