@@ -109,8 +109,8 @@
   本轮仅执行 `gofmt`、Python 单测与 `compileall`、`check_migration.py --source-only`，未运行 Go 测试或触发 Actions；golden 结果仍需 CI 复核。
 
 - 最新 Actions 再次确认 parser 已通过编译，但 contract golden 暴露出 mapper 计划构建时跳过整个 `params` 节点，导致只应用 `defaults`：server、端口、userinfo、TLS、transport 和协议参数全部丢失。现已恢复 `params` 递归收集；同时修复 `applyMapperExtract` 调用签名和 parser 辅助函数段。
-- 已启用本地 Go 编译验证：使用 `D:\go\bin\go.exe` 与 `GOPATH=d:\gopath`。parser 包可以实际编译并运行 contract golden；其余差异已收敛到 HTTP headers、Hysteria port/item 过滤、MASQUE nested required 等 mapper 语义。
-- builder 本地编译尝试被临时 core staging 的子模块内容阻断：pinned worktree 的 `sing-tun` 缺少 core 所需 `gtcpip/*` 包，`utls` 缺少根包；这属于本地 core/submodule checkout 不完整，不是 app builder 源码诊断。临时 junction 已删除，CI 仍使用递归 submodule checkout。
+- 最新 Actions 日志中的 builder 编译阻断点为 `dns_records.go:513 undefined: record`，已移除该错误作用域引用，恢复为显式 `offline_ruleset_missing` 分支。parser 当前已进入 golden 阶段，未出现新的 Go 编译错误。
+- 允许本地 Go 验证后，已使用 `D:\go\bin\go.exe` 与 `GOPATH=d:\gopath` 实际编译 parser 并运行 golden；builder 因本地 core staging 的 sing-tun/utls 子模块不完整无法完成依赖解析，临时 junction 已删除。
 - 本地 gofmt、Python 单测、compileall、source-only migration check 均通过。
 
 以下内容仍不能宣称与旧 Flutter 应用完全等价：

@@ -510,10 +510,6 @@ func dnsRecordExpandPresetBody(preset map[string]any, vars map[string]any, node 
 					continue
 				}
 			} else {
-				if boolValue(record, "_seeded_default", false) {
-					state.warn("preset_ruleset_cache_missing", "selectable_rules."+id+".rule_set."+tag, "default remote preset rule_set has no offline cache payload and was skipped", tag)
-					continue
-				}
 				state.fatal("offline_ruleset_missing", "selectable_rules."+id+".rule_set."+tag, "remote preset rule_set has no offline cache payload", tag)
 				continue
 			}
