@@ -485,6 +485,10 @@ func executeMapper(state *mapperState, protocol *registryProtocol, dialect strin
 				}
 				continue
 			}
+			if k == "version" {
+				setPath(state.entry, k, cloneValue(v))
+				continue
+			}
 			setPath(state.entry, k, resolveMapperPlaceholders(normalizeIntegral(cloneValue(v)), state))
 		}
 	}
