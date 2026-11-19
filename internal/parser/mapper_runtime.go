@@ -1608,7 +1608,13 @@ func coerceMapperValue(v any, record map[string]any, reg *registry) (any, bool) 
 					}
 				}
 			}
-			if !exists || mapped == nil {
+			if !exists {
+				if _, invalidPolicy := record["on_invalid"]; invalidPolicy {
+					return nil, false
+				}
+				return v, true
+			}
+			if mapped == nil {
 				return nil, false
 			}
 			v = mapped
