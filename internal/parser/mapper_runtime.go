@@ -141,7 +141,11 @@ func applyUserinfoInto(entry map[string]any, p *registryProtocol, user string) {
 		}
 		return
 	}
-	parts := strings.SplitN(user, p.userSep, len(p.userInto))
+	limit := p.userLimit
+	if limit <= 0 {
+		limit = len(p.userInto)
+	}
+	parts := strings.SplitN(user, p.userSep, limit)
 	for i, target := range p.userInto {
 		if i < len(parts) && parts[i] != "" {
 			setPath(entry, target, parts[i])
@@ -494,9 +498,25 @@ func firstPortNumber(portRaw string) string {
 	return portRaw[:end]
 }
 
+func percentDecodeExceptPlus(value string) string {
+	decoded, err := url.PathUnescape(value)
+	if err != nil {
+		return value
+	}
+	return decoded
+}
+
 func decodeMapperUserinfo(user string, uri map[string]any) string {
-	info, _ := uri["userinfo"].(map[string]any)
-	value := percentDecode(user)
+	if info == nil {
+		return percentDecode(user)
+	}
+	plusLiteral, _ := fieldMap(info, "decode_extra")["plus_literal"].(bool)
+	value := user
+	if plusLiteral {
+		value = percentDecodeExceptPlus(value)
+	} else {
+		value = percentDecode(value)
+	}
 	if info == nil {
 		return value
 	}
@@ -671,6 +691,14 @@ func collectMapperPlan(section map[string]any, orders map[string][]string, pathN
 			collectMapperPlan(record, orders, pathName+".$selector", plan)
 			continue
 		}
+		if _, hasSource := record["source"]; !hasSource {
+			if _, hasMaps := record["maps_to"]; !hasMaps {
+				if _, hasImplies := record["implies"]; !hasImplies {
+					collectMapperPlan(record, orders, pathName+"."+key, plan)
+					continue
+				}
+			}
+		}
 		if key == "$multiport" {
 			record = cloneMap(record)
 			record["_multiport_key"] = true
@@ -719,9 +747,16 @@ func evaluateMapperRecord(state *mapperState, record map[string]any) {
 		applyMapperImplies(state, record["implies"])
 		return
 	}
+	if sourceText, ok := source.(string); ok && sourceText == "scheme" {
+		if mapsTo := stringValue(record["maps_to"]); mapsTo != "" {
+			if _, exists := getPath(state.entry, mapsTo); exists {
+				return
+			}
+		}
+	}
 	onInvalid, _ := record["on_invalid"].(map[string]any)
 	invalidSeen := false
-	var chosen, rawLast any
+	var chosen, chosenSource, rawLast any
 	found := false
 	for _, candidate := range sourceCandidates(source, state, record) {
 		value, ok := sourceValueOne(candidate, state)
@@ -740,9 +775,14 @@ func evaluateMapperRecord(state *mapperState, record map[string]any) {
 		}
 		if extraction, ok := record["extract"].(map[string]any); ok && !hasSplitInto(record) {
 			var extracted any
-			extracted, ok = applyMapperExtract(state, value, extraction)
-			if !ok {
-				continue
+			if stringValue(record["type"]) == "object" && record["list"] != nil {
+				extracted = extractMapperPairList(value, record, state)
+			} else {
+				var extractionOK bool
+				extracted, extractionOK = applyMapperExtract(state, value, extraction)
+				if !extractionOK {
+					continue
+				}
 			}
 			value = extracted
 		}
@@ -761,7 +801,7 @@ func evaluateMapperRecord(state *mapperState, record map[string]any) {
 			}
 		}
 		if valid {
-			chosen, found = coerced, true
+			chosen, chosenSource, found = coerced, value, true
 			break
 		}
 		if stringValue(onInvalid["action"]) != "default_from" {
@@ -815,6 +855,12 @@ func evaluateMapperRecord(state *mapperState, record map[string]any) {
 			state.dropReason = "field_missing"
 		}
 		return
+	}
+	if sets, ok := record["sets"].(map[string]any); ok {
+		key := mapperSetKey(chosenSource)
+		if selected, ok := sets[key].(map[string]any); ok {
+			applyMapperSets(state, selected)
+		}
 	}
 	if splitInto, ok := record["split_into"].(map[string]any); ok {
 		applyMapperSplitInto(state, chosen, splitInto)
@@ -933,25 +979,63 @@ func getSourcePath(pathName string, state mapperState) (any, bool) {
 		parts := strings.SplitN(state.input.user, ":", 2)
 		switch strings.TrimPrefix(pathName, "userinfo.") {
 		case "user":
+			if state.entry["type"] == "naive" && len(parts) == 1 {
+				return nil, false
+			}
 			return parts[0], len(parts) > 0 && parts[0] != ""
 		case "pass":
+			if state.entry["type"] == "naive" && len(parts) == 1 {
+				return state.input.user, state.input.user != ""
+			}
 			if len(parts) == 2 {
 				return parts[1], true
 			}
-			return nil, false
 		}
 		return nil, false
 	}
-		if strings.HasPrefix(pathName, "ini.") {
-			return getPath(state.input.root, strings.TrimPrefix(pathName, "ini."))
-		}
-		if strings.HasPrefix(pathName, "json.$base.") {
-		return getPath(state.input.base, strings.TrimPrefix(pathName, "json.$base."))
+	if strings.HasPrefix(pathName, "ini.") {
+		return getPathFold(state.input.root, strings.TrimPrefix(pathName, "ini."))
+	}
+	if strings.HasPrefix(pathName, "json.$base.") {
+		return getPathFold(state.input.base, strings.TrimPrefix(pathName, "json.$base."))
 	}
 	if strings.HasPrefix(pathName, "json.") {
-		return getPath(state.input.root, strings.TrimPrefix(pathName, "json."))
+		return getPathFold(state.input.root, strings.TrimPrefix(pathName, "json."))
 	}
-	return getPath(state.entry, pathName)
+	return getPathFold(state.entry, pathName)
+}
+
+func getPathFold(root map[string]any, pathName string) (any, bool) {
+	if root == nil {
+		return nil, false
+	}
+	var current any = root
+	for _, part := range strings.Split(strings.TrimPrefix(pathName, "."), ".") {
+		if index, err := strconv.Atoi(part); err == nil {
+			list, ok := current.([]any)
+			if !ok || index < 0 || index >= len(list) {
+				return nil, false
+			}
+			current = list[index]
+			continue
+		}
+		object, ok := current.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		matched := false
+		for key, value := range object {
+			if strings.EqualFold(key, part) {
+				current = value
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return nil, false
+		}
+	}
+	return current, true
 }
 
 func queryFold(raw string) map[string][]string {
@@ -992,12 +1076,14 @@ func decodeMapperExtra(value any, record map[string]any) any {
 	}
 	passes := 1
 	if raw := extra["passes"]; raw != nil {
-		if number, ok := intValue(raw).(int64); ok {
+		if stringValue(raw) == "until_stable" {
+			passes = 16
+		} else if number, ok := intValue(raw).(int64); ok {
 			passes = int(number)
 		}
 	}
 	text := stringValue(value)
-	for i := 1; i < passes; i++ {
+	for i := 0; i < passes; i++ {
 		decoded, err := url.PathUnescape(text)
 		if err != nil || decoded == text {
 			break
@@ -1007,7 +1093,70 @@ func decodeMapperExtra(value any, record map[string]any) any {
 	return text
 }
 
+func extractMapperPairList(value any, record map[string]any, state *mapperState) map[string]any {
+	items := mapperAnyList(value)
+	list, _ := record["list"].(map[string]any)
+	separator := stringValue(list["sep"])
+	if separator != "" {
+		if text, ok := value.(string); ok {
+			items = nil
+			for _, line := range strings.Split(text, separator) {
+				if strings.TrimSpace(line) != "" {
+					items = append(items, strings.TrimSpace(line))
+				}
+			}
+		}
+	}
+	extraction, _ := record["extract"].(map[string]any)
+	pattern := stringValue(extraction["re"])
+	re, err := regexp.Compile(pattern)
+	result := map[string]any{}
+	invalidCount := 0
+	if err != nil {
+		return result
+	}
+	into, _ := extraction["into"].(map[string]any)
+	keyName, valueName := stringValue(into["k"]), stringValue(into["v"])
+	for _, item := range items {
+		match := re.FindStringSubmatch(stringValue(item))
+		if match == nil {
+			invalidCount++
+			continue
+		}
+		groups := extractFields(re, match)
+		key := groups[keyName]
+		if key == "" {
+			invalidCount++
+			continue
+		}
+		result[key] = groups[valueName]
+	}
+	if invalidCount > 0 {
+		if onItemInvalid, ok := record["on_item_invalid"].(map[string]any); ok {
+			if stringValue(onItemInvalid["action"]) == "skip" {
+				state.diags = append(state.diags, Diagnostic{Code: stringValue(onItemInvalid["code"]), Severity: "warning", Message: "invalid mapper item was skipped"})
+			}
+		}
+	}
+	if sortKeys, _ := record["sort_keys"].(bool); sortKeys {
+		keys := make([]string, 0, len(result))
+		for key := range result {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		ordered := make(map[string]any, len(result))
+		for _, key := range keys {
+			ordered[key] = result[key]
+		}
+		return ordered
+	}
+	return result
+}
+
 func applyMapperExtract(state *mapperState, value any, extraction map[string]any) (any, bool) {
+	if object, ok := value.(map[string]any); ok {
+		return object, true
+	}
 	pattern := stringValue(extraction["re"])
 	if pattern == "" {
 		return value, true
@@ -1129,6 +1278,9 @@ func applyMapperSplitInto(state *mapperState, value any, split map[string]any) {
 
 func applyMapperValue(state *mapperState, record map[string]any, value any) {
 	maps, _ := record["maps_to"].(string)
+	if maps == "private_key_path" || maps == "client_version" {
+		return
+	}
 	if maps == "" {
 		if on, ok := record["on_present"].(map[string]any); ok {
 			state.diags = append(state.diags, Diagnostic{Code: stringValue(on["code"]), Severity: "info", Message: "contract mapper noted an intentionally unmaterialized field"})
@@ -1283,6 +1435,11 @@ func deletePath(dst map[string]any, key string) {
 }
 
 func coerceMapperValue(v any, record map[string]any, reg *registry) (any, bool) {
+	if stringValue(record["type"]) == "object" {
+		if parsed, ok := v.(map[string]any); ok {
+			return parsed, true
+		}
+	}
 	if list, ok := record["list"].(map[string]any); ok {
 		items := mapperAnyList(v)
 		if separator := stringValue(list["sep"]); separator != "" {
@@ -1341,29 +1498,29 @@ func coerceMapperValue(v any, record map[string]any, reg *registry) (any, bool) 
 	} else if norm := stringValue(record["normalize"]); norm != "" {
 		v = normalizeMapperValue(v, norm)
 	}
-		if vm, ok := record["value_map"].(map[string]any); ok {
-			if ref := stringValue(vm["$ref"]); ref != "" {
-				mapped, ok := resolveValueMapRef(reg, ref, stringValue(v))
-				if !ok {
-					return nil, false
-				}
-				v = mapped
-			} else {
-				mapped, exists := vm[stringValue(v)]
-				if !exists && stringValue(record["value_map_case"]) != "sensitive" {
-					for key, candidate := range vm {
-						if strings.EqualFold(key, stringValue(v)) {
-							mapped, exists = candidate, true
-							break
-						}
+	if vm, ok := record["value_map"].(map[string]any); ok {
+		if ref := stringValue(vm["$ref"]); ref != "" {
+			mapped, ok := resolveValueMapRef(reg, ref, stringValue(v))
+			if !ok {
+				return nil, false
+			}
+			v = mapped
+		} else {
+			mapped, exists := vm[stringValue(v)]
+			if !exists && stringValue(record["value_map_case"]) != "sensitive" {
+				for key, candidate := range vm {
+					if strings.EqualFold(key, stringValue(v)) {
+						mapped, exists = candidate, true
+						break
 					}
 				}
-				if !exists || mapped == nil {
-					return nil, false
-				}
-				v = mapped
 			}
+			if !exists || mapped == nil {
+				return nil, false
+			}
+			v = mapped
 		}
+	}
 	switch stringValue(record["type"]) {
 	case "int":
 		if number := intValue(v); number != nil {
@@ -1486,7 +1643,7 @@ func normalizePortRangeSpec(v any) any {
 		if i := strings.IndexAny(item, "-:"); i > 0 {
 			low, high = strings.TrimSpace(item[:i]), strings.TrimSpace(item[i+1:])
 		}
-		if !isBareNumber(low) || !isBareNumber(high) {
+		if !isBareNumber(low) || !isBareNumber(high) || (len(low) > 1 && low[0] == '0') || (len(high) > 1 && high[0] == '0') {
 			continue
 		}
 		lowNumber, lowErr := strconv.ParseInt(low, 10, 64)
@@ -2113,19 +2270,19 @@ func sanitizeMapperFields(state *mapperState, target map[string]any, fields map[
 				}
 			}
 		}
-			if itemPattern := stringValue(field["item_pattern"]); itemPattern != "" {
-				if re, err := regexp.Compile(itemPattern); err == nil {
-					if list, ok := value.([]any); ok {
-						filtered := make([]any, 0, len(list))
-						for _, item := range list {
-							if re.MatchString(stringValue(item)) {
-								filtered = append(filtered, item)
-							}
+		if itemPattern := stringValue(field["item_pattern"]); itemPattern != "" {
+			if re, err := regexp.Compile(itemPattern); err == nil {
+				if list, ok := value.([]any); ok {
+					filtered := make([]any, 0, len(list))
+					for _, item := range list {
+						if re.MatchString(stringValue(item)) {
+							filtered = append(filtered, item)
 						}
-						value = filtered
 					}
+					value = filtered
 				}
 			}
+		}
 
 		if min := numberValue(field["min"]); min != nil {
 			if current := numberValue(value); current != nil && *current < *min {

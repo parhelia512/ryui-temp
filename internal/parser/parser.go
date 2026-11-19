@@ -1481,6 +1481,7 @@ type registryProtocol struct {
 	userInto            []string
 	userSingleInto      string
 	userSep             string
+	userLimit           int
 	params              map[string]registryParam
 	raw                 map[string]any
 	order               map[string][]string
@@ -1680,11 +1681,14 @@ func registryProtocolMetadata(p *registryProtocol, uri map[string]any) {
 		if single := stringValue(ui["single_into"]); single != "" {
 			p.userSingleInto = single
 		}
-		if split, ok := ui["split"].(map[string]any); ok {
-			if sep := stringValue(split["sep"]); sep != "" {
-				p.userSep = sep
+			if split, ok := ui["split"].(map[string]any); ok {
+				if sep := stringValue(split["sep"]); sep != "" {
+					p.userSep = sep
+				}
+				if limit, ok := intValue(split["limit"]).(int64); ok && limit > 0 {
+					p.userLimit = int(limit)
+				}
 			}
-		}
 	}
 	if q, ok := uri["query"].(map[string]any); ok {
 		for k, v := range q {
