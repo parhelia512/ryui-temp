@@ -78,6 +78,7 @@ def main() -> int:
         raise RuntimeError(f"expected 10 pinned RyUI Android module Gradle files, found {len(gradles)}")
     for path in gradles:
         exact(path, "minSdk = 33", "minSdk = 24")
+        exact(path, '    id("org.jetbrains.kotlin.android")\n', "")
 
     native_kotlin = source / "platform/android/ryui/src/main/java/dev/ryui/RyUINative.kt"
     if not native_kotlin.is_file():
