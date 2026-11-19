@@ -263,6 +263,8 @@ def main() -> int:
         shared_flags.add(match.group(1))
     if not {"-trimpath", "-buildvcs=false"}.issubset(shared_flags):
         raise RuntimeError("canonical build_libbox shared flags changed; review c-shared build arguments")
+    tags = canonical_tags(core)
+    ldflags = canonical_ldflags(core, version)
     native_dir = host / "app" / "src" / "main" / "jniLibs"
     results = build_native(core, app, native_dir, env, version, tags, ldflags)
     gradle = gradle_command(host)
