@@ -186,7 +186,7 @@ def build_native(root: Path, app: Path, output: Path, env: dict[str, str], versi
             out = output / abi / "liblxbox.so"
             out.parent.mkdir(parents=True, exist_ok=True)
             build_env = dict(env)
-            build_env.update({"GOOS": "android", "GOARCH": goarch, "CGO_ENABLED": "1", "CC": str(ndk_compiler(ndk, compiler)), "CGO_CFLAGS": "-D__ANDROID_API__=24", "CGO_LDFLAGS": "-Wl,-z,max-page-size=16384"})
+            build_env.update({"GOOS": "android", "GOARCH": goarch, "CGO_ENABLED": "1", "CC": str(ndk_compiler(ndk, compiler)), "CGO_LDFLAGS": "-Wl,-z,max-page-size=16384"})
             if goarm:
                 build_env["GOARM"] = goarm
             graph_path = output.parent / f"go-deps-{abi}.txt"
