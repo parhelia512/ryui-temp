@@ -632,10 +632,10 @@ func buildMapperPlan(state *mapperState, protocol *registryProtocol, dialect str
 		blocks, _ := shared["blocks"].(map[string]any)
 		block, _ := blocks[parts[1]].(map[string]any)
 		if block != nil {
-			collectMapperPlan(block, state.reg.sharedOrder[parts[0]], "blocks."+parts[1], &plan)
+			collectMapperPlan(block, state.reg.sharedOrder[parts[0]], "blocks."+parts[1], false, &plan)
 		}
 	}
-	collectMapperPlan(mapper, protocol.order, "mappers."+dialect, &plan)
+	collectMapperPlan(mapper, protocol.order, "mappers."+dialect, false, &plan)
 	return plan
 }
 
@@ -673,19 +673,19 @@ func orderedKeys(section map[string]any, order []string) []string {
 	return keys
 }
 
-func collectMapperPlan(section map[string]any, orders map[string][]string, pathName string, plan *[]mapperRecord) {
+func collectMapperPlan(section map[string]any, orders map[string][]string, pathName string, selectorContext bool, plan *[]mapperRecord) {
 	for _, key := range orderedKeys(section, orders[pathName]) {
 		switch key {
 		case "include", "defaults", "detect", "forms", "body_source", "unknown_key", "emit", "overlays", "note", "label", "scheme_sets", "userinfo":
 			continue
 		case "params":
 			if params, ok := section[key].(map[string]any); ok {
-				collectMapperPlan(params, orders, pathName+".params", plan)
+				collectMapperPlan(params, orders, pathName+".params", selectorContext, plan)
 			}
 			continue
 		case "$selector":
 			if selector, ok := section[key].(map[string]any); ok {
-				collectMapperPlan(selector, orders, pathName+".$selector", plan)
+				collectMapperPlan(selector, orders, pathName+".$selector", true, plan)
 			}
 			continue
 		}
@@ -696,7 +696,7 @@ func collectMapperPlan(section map[string]any, orders map[string][]string, pathN
 		if _, hasSource := record["source"]; !hasSource {
 			if _, hasMaps := record["maps_to"]; !hasMaps {
 				if _, hasImplies := record["implies"]; !hasImplies {
-					collectMapperPlan(record, orders, pathName+"."+key, plan)
+					collectMapperPlan(record, orders, pathName+"."+key, selectorContext, plan)
 					continue
 				}
 			}
@@ -704,6 +704,10 @@ func collectMapperPlan(section map[string]any, orders map[string][]string, pathN
 		if key == "$multiport" {
 			record = cloneMap(record)
 			record["_multiport_key"] = true
+		}
+		if selectorContext {
+			record = cloneMap(record)
+			record["selector"] = true
 		}
 		priority := 0
 		if value, ok := intValue(record["priority"]).(int64); ok {
@@ -792,7 +796,15 @@ func evaluateMapperRecord(state *mapperState, record map[string]any) {
 	}
 	source, hasSource := record["source"]
 	if !hasSource {
-		applyMapperImplies(state, record["implies"])
+		if _, hasMaps := record["maps_to"]; !hasMaps {
+			if _, hasSets := record["sets"]; !hasSets {
+				applyMapperImplies(state, record["implies"])
+				return
+			}
+		}
+		if _, hasSets := record["sets"]; hasSets {
+			applyMapperValue(state, record, "")
+		}
 		return
 	}
 	if sourceText, ok := source.(string); ok && sourceText == "scheme" {
