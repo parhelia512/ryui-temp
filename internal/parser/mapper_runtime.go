@@ -507,6 +507,7 @@ func percentDecodeExceptPlus(value string) string {
 }
 
 func decodeMapperUserinfo(user string, uri map[string]any) string {
+	info, _ := uri["userinfo"].(map[string]any)
 	if info == nil {
 		return percentDecode(user)
 	}
