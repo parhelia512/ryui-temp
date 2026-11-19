@@ -2230,13 +2230,6 @@ func sanitizeMapperFields(state *mapperState, target map[string]any, fields map[
 		}
 		value, exists := target[name]
 		if !exists {
-			if minWhen, ok := field["min_when"].(map[string]any); ok && minWhen["absent_is_zero"] == true && conditionMatches(minWhen["when"], state) {
-				if minimum := numberValue(minWhen["min"]); minimum != nil && *minimum > 0 && stringValue(minWhen["action"]) == "drop_node" {
-					state.dropNode = true
-					state.dropReason = stringValue(minWhen["code"])
-					state.diags = append(state.diags, Diagnostic{Code: state.dropReason, Severity: "error", Message: "field value is below the conditional minimum", Path: pathName})
-				}
-			}
 			if defaultWhen, ok := field["default_when"].(map[string]any); ok && defaultWhen["absent"] == true && conditionMatches(defaultWhen["when"], state) {
 				value = normalizeIntegral(cloneValue(defaultWhen["value"]))
 				if list, ok := field["list"].(map[string]any); ok {
@@ -2255,6 +2248,12 @@ func sanitizeMapperFields(state *mapperState, target map[string]any, fields map[
 				}
 				target[name] = value
 				exists = true
+			} else if minWhen, ok := field["min_when"].(map[string]any); ok && minWhen["absent_is_zero"] == true && conditionMatches(minWhen["when"], state) {
+				if minimum := numberValue(minWhen["min"]); minimum != nil && *minimum > 0 && stringValue(minWhen["action"]) == "drop_node" {
+					state.dropNode = true
+					state.dropReason = stringValue(minWhen["code"])
+					state.diags = append(state.diags, Diagnostic{Code: state.dropReason, Severity: "error", Message: "field value is below the conditional minimum", Path: pathName})
+				}
 			}
 		}
 		if !exists {
