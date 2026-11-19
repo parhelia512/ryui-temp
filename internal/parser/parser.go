@@ -211,13 +211,25 @@ func parseBody(ctx context.Context, input []byte, options Options, registry *reg
 			return result
 		}
 	}
+	if isWGIni(text) {
+		result.Format = "wg_ini"
+		result.Recognized = true
+		node, ds := mapWireGuardINI(text, result.Source, registry, "", "", map[string]any{"ini": text}, "wg_ini")
+		if node == nil {
+			result.Diagnostics = append(result.Diagnostics, ds...)
+		} else {
+			node.Diagnostics = append(node.Diagnostics, ds...)
+			result = addNode(result, *node)
+		}
+		return result
+	}
 	if strings.HasPrefix(text, "{") || strings.HasPrefix(text, "[") {
 		result.Format = "json"
 		result.Diagnostics = append(result.Diagnostics, diag("document_invalid", "error", "JSON document is malformed or has an unsupported root", result.Source))
 		return result
 	}
 	if strings.HasPrefix(strings.ToLower(text), "vpn://") {
-		nodes, diags, handled := decodeAmneziaProfile(text)
+		nodes, diags, handled := decodeAmneziaProfile(text, result.Source, registry)
 		if handled {
 			result.Format = "amnezia"
 			result.Recognized = true
@@ -228,16 +240,6 @@ func parseBody(ctx context.Context, input []byte, options Options, registry *reg
 			}
 			return result
 		}
-	}
-	if isWGIni(text) {
-		result.Format = "wg_ini"
-		if node, ok := parseINI(text, options.Source, registry, "wg_ini", result.Source); ok {
-			result = addNode(result, node)
-			result.Recognized = true
-		} else {
-			result.Diagnostics = append(result.Diagnostics, diag("form_unrecognized", "error", "WireGuard INI has no usable peer", result.Source))
-		}
-		return result
 	}
 	if depth > 0 && looksLikeBase64(text) {
 		if decoded, ok := decodeBase64(text); ok && plausiblePayload(string(decoded)) {
@@ -425,7 +427,7 @@ func parseURILines(ctx context.Context, text string, options Options, registry *
 			continue
 		}
 		if strings.HasPrefix(strings.ToLower(line), "vpn://") {
-			nodes, ds, handled := decodeAmneziaProfile(line)
+			nodes, ds, handled := decodeAmneziaProfile(line, result.Source, registry)
 			if handled {
 				for i := range ds {
 					ds[i].Line = lineNo + 1
@@ -653,13 +655,7 @@ func parseWireguardURI(rawURI string, source Source, registry *registry) (*Node,
 	}
 	if !strings.Contains(body, "@") && !strings.Contains(body, "?") {
 		if decoded, ok := decodeBase64Flexible(body); ok && isWGIni(string(decoded)) {
-			if node, ok := parseINI(string(decoded), source, registry, "wg_ini", source); ok {
-				if fragment != "" {
-					node.Name = fragment
-					node.Raw["name"] = fragment
-				}
-				return &node, nil
-			}
+			return mapWireGuardINI(string(decoded), source, registry, fragment, "", map[string]any{"uri": rawURI}, "uri")
 		}
 	}
 	u, err := url.Parse(rawURI)
@@ -714,11 +710,7 @@ func parseVPN(rawURI string, source Source, registry *registry) (*Node, []Diagno
 	if decoded, ok := decodeBase64Flexible(body); ok {
 		text := string(decoded)
 		if isWGIni(text) {
-			node, parsed := parseINI(text, source, registry, "wg_ini", source)
-			if !parsed {
-				return nil, []Diagnostic{{Code: "form_unrecognized", Severity: "error", Message: "WireGuard configuration is incomplete", Source: source}}
-			}
-			return &node, nil
+			return mapWireGuardINI(text, source, registry, "", "", map[string]any{"ini": text}, "wg_ini")
 		}
 		var profile map[string]any
 		if decodeJSONInto(decoded, &profile) == nil {
@@ -726,9 +718,8 @@ func parseVPN(rawURI string, source Source, registry *registry) (*Node, []Diagno
 				for _, c := range containers {
 					if cm, ok := c.(map[string]any); ok {
 						if ini := stringValue(cm["config"]); ini != "" && isWGIni(ini) {
-							node, parsed := parseINI(ini, source, registry, "wg_ini", source)
-							if parsed {
-								return &node, nil
+							if node, ds := mapWireGuardINI(ini, source, registry, "", "", map[string]any{"ini": ini}, "wg_ini"); node != nil {
+								return node, ds
 							}
 						}
 					}
@@ -739,7 +730,7 @@ func parseVPN(rawURI string, source Source, registry *registry) (*Node, []Diagno
 	return nil, []Diagnostic{{Code: "form_unrecognized", Severity: "error", Message: "vpn payload is not a supported WireGuard/Amnezia profile", Source: source}}
 }
 
-func parseINI(text string, source Source, registry *registry, origin string, diagSource Source) (Node, bool) {
+func parseLegacyINI(text string, source Source, origin string) (Node, bool) {
 	var interfaceFields map[string]string
 	var peerSections []map[string]string
 	var current map[string]string
@@ -1381,16 +1372,17 @@ func parseQueryValue(s string) any {
 func intValue(v any) any {
 	switch x := v.(type) {
 	case int:
-		return x
+		return int64(x)
 	case int64:
 		return x
 	case json.Number:
 		if i, err := x.Int64(); err == nil {
 			return i
 		}
-		return x
 	case float64:
-		return int64(x)
+		if x >= -0x1p63 && x < 0x1p63 && float64(int64(x)) == x {
+			return int64(x)
+		}
 	case string:
 		if i, err := strconv.ParseInt(strings.TrimSpace(x), 10, 64); err == nil {
 			return i
@@ -1609,7 +1601,10 @@ func mergeParserMap(dst, src map[string]any) {
 	for key, value := range src {
 		srcMap, srcOK := value.(map[string]any)
 		dstMap, dstOK := dst[key].(map[string]any)
-		if srcOK && dstOK {
+		// Drafts patch containers by name, but a mapper record is a complete
+		// replacement. In particular, ws.ed deliberately omits implies.
+		_, record := srcMap["source"]
+		if srcOK && dstOK && !record {
 			mergeParserMap(dstMap, srcMap)
 			continue
 		}
@@ -1681,14 +1676,14 @@ func registryProtocolMetadata(p *registryProtocol, uri map[string]any) {
 		if single := stringValue(ui["single_into"]); single != "" {
 			p.userSingleInto = single
 		}
-			if split, ok := ui["split"].(map[string]any); ok {
-				if sep := stringValue(split["sep"]); sep != "" {
-					p.userSep = sep
-				}
-				if limit, ok := intValue(split["limit"]).(int64); ok && limit > 0 {
-					p.userLimit = int(limit)
-				}
+		if split, ok := ui["split"].(map[string]any); ok {
+			if sep := stringValue(split["sep"]); sep != "" {
+				p.userSep = sep
 			}
+			if limit, ok := intValue(split["limit"]).(int64); ok && limit > 0 {
+				p.userLimit = int(limit)
+			}
+		}
 	}
 	if q, ok := uri["query"].(map[string]any); ok {
 		for k, v := range q {

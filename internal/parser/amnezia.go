@@ -12,7 +12,7 @@ import (
 
 const maxAmneziaInflated = 4 << 20
 
-func decodeAmneziaProfile(link string) ([]Node, []Diagnostic, bool) {
+func decodeAmneziaProfile(link string, source Source, reg *registry) ([]Node, []Diagnostic, bool) {
 	link = strings.TrimSpace(link)
 	if !strings.HasPrefix(strings.ToLower(link), "vpn://") {
 		return nil, nil, false
@@ -43,7 +43,6 @@ func decodeAmneziaProfile(link string) ([]Node, []Diagnostic, bool) {
 		}
 		var ini string
 		var last map[string]any
-		kind := ""
 		for _, protocol := range []string{"awg", "wireguard"} {
 			proto, ok := container[protocol].(map[string]any)
 			if !ok {
@@ -51,7 +50,7 @@ func decodeAmneziaProfile(link string) ([]Node, []Diagnostic, bool) {
 			}
 			candidate, meta := extractAmneziaINI(proto)
 			if candidate != "" {
-				ini, last, kind = candidate, meta, protocol
+				ini, last = candidate, meta
 				break
 			}
 		}
@@ -59,27 +58,20 @@ func decodeAmneziaProfile(link string) ([]Node, []Diagnostic, bool) {
 			continue
 		}
 		ini = substituteAmneziaDNS(ini, profile)
-		if mtu := intValue(last["mtu"]); mtu != nil {
+		if mtu, ok := intValue(last["mtu"]).(int64); ok && mtu > 0 {
 			ini = amneziaMTU(ini, fmt.Sprint(mtu))
 		}
-		node, ok := parseINI(ini, Source{}, nil, "wg_ini", Source{})
-		if !ok {
-			diags = append(diags, Diagnostic{Code: "form_unrecognized", Severity: "warning", Message: "Amnezia container did not produce a usable WireGuard peer", Value: kind})
+		hint := profileName
+		if hint == "" {
+			hint = firstString(container, "container", "name")
+		}
+		node, ds := mapWireGuardINI(ini, source, reg, "", hint, map[string]any{"ini": ini}, "wg_ini")
+		if node == nil {
+			diags = append(diags, ds...)
 			continue
 		}
-		containerName := firstString(container, "container", "name")
-		if profileName != "" && containerName != "" {
-			node.Name = profileName + " " + containerName
-		} else if profileName != "" {
-			node.Name = profileName
-		} else if containerName != "" {
-			node.Name = containerName
-		}
-		if node.Name == "" {
-			node.Name = fmt.Sprintf("wireguard-%s", firstPeerAddress(node.Canonical))
-		}
-		node.Key = stableKey(node.Protocol, node.Name, node.Canonical)
-		nodes = append(nodes, node)
+		node.Diagnostics = append(node.Diagnostics, ds...)
+		nodes = append(nodes, *node)
 	}
 	if len(nodes) == 0 {
 		diags = append(diags, Diagnostic{Code: "form_unrecognized", Severity: "error", Message: "vpn profile contains no usable WireGuard/AmneziaWG config"})

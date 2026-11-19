@@ -37,6 +37,10 @@ type mapperState struct {
 	reg        *registry
 	dropNode   bool
 	dropReason string
+	// Defaults, implications and selector sets do not claim a destination
+	// against later explicit writes (e.g. port, fingerprint or WS header).
+	written   map[string]bool
+	fallbacks []map[string]any
 }
 
 type mapperURL struct {
@@ -74,12 +78,13 @@ func mapContractURI(rawURI string, protocol string, source Source, reg *registry
 		return nil, nil, false
 	}
 	if form == "conf_b64" {
-		return nil, nil, false
+		if decoded == nil {
+			return nil, []Diagnostic{diag("field_missing", "error", "encoded WireGuard configuration is not an INI document", source)}, true
+		}
+		node, ds := mapWireGuardINI(stringValue(decoded), source, reg, parsed.frag, "", map[string]any{"uri": rawURI}, "uri")
+		return node, ds, true
 	}
 	in := mapperInput{root: map[string]any{}, query: queryFold(parsed.queryRaw), scheme: strings.ToLower(parsed.scheme), host: parsed.host, portRaw: parsed.portRaw, path: parsed.path, frag: parsed.frag, form: form}
-	if form == "conf_b64" {
-		in.root = mapperINIValues(stringValue(decoded))
-	}
 	if form == "v2rayn" {
 		root, ok := decoded.(map[string]any)
 		if !ok {
@@ -92,7 +97,12 @@ func mapContractURI(rawURI string, protocol string, source Source, reg *registry
 	}
 	in.port = intValue(firstPortNumber(parsed.portRaw))
 	if parsed.user != "" {
-		in.user = decodeMapperUserinfo(parsed.user, uri)
+		if p.singboxType == "wireguard" {
+			// A base64 credential is URL userinfo, not a form value.
+			in.user = percentDecodeExceptPlus(parsed.user)
+		} else {
+			in.user = decodeMapperUserinfo(parsed.user, uri)
+		}
 	} else if form == "sip002" || form == "legacy" {
 		in.user = decodeMapperUserinfo(stringValue(decoded), uri)
 	}
@@ -116,7 +126,7 @@ func mapContractURI(rawURI string, protocol string, source Source, reg *registry
 	for i := range state.diags {
 		state.diags[i].Source = source
 	}
-	if requiredMissing(state.entry, uri) {
+	if !state.dropNode && requiredMissing(state.entry, uri) {
 		state.diags = append(state.diags, Diagnostic{Code: "required_field_missing", Severity: "error", Message: "required mapper field is absent", Value: rawURI, Source: source})
 		return nil, state.diags, true
 	}
@@ -190,6 +200,11 @@ func decodeMapperForm(rawURI string, uri map[string]any, p *registryProtocol) (s
 		if def, _ := detect["default"].(bool); def {
 			return true
 		}
+		if form["id"] == "conf_b64" {
+			// The fragment labels the config; it is not part of the encoded document.
+			payload, _, _ := strings.Cut(body, "#")
+			return mapperDetectRule(detect, payload, payload)
+		}
 		return mapperDetectRule(detect, authority, body)
 	}
 	chosen := ""
@@ -224,22 +239,13 @@ func decodeMapperForm(rawURI string, uri map[string]any, p *registryProtocol) (s
 	}
 	switch chosen {
 	case "conf_b64":
-		decoded, ok := decodeBase64Flexible(strings.TrimSpace(authority))
-		if !ok {
-			return "", mapperURL{}, nil
-		}
-		text := string(decoded)
-		if !isWGIni(text) {
-			return "", mapperURL{}, nil
-		}
-		root := mapperINIValues(text)
+		payload, _, _ := strings.Cut(body, "#")
+		decoded, ok := decodeBase64Flexible(strings.TrimSpace(payload))
 		parsed := mapperURL{scheme: scheme, frag: mapperFragment(rawURI)}
-		if peer, ok := root["Peer"].(map[string]any); ok {
-			if endpoint := stringValue(peer["Endpoint"]); endpoint != "" {
-				parsed.host, parsed.portRaw = splitMapperHostPort(endpoint)
-			}
+		if !ok || !isWGIni(string(decoded)) {
+			return chosen, parsed, nil
 		}
-		return "conf_b64", parsed, text
+		return chosen, parsed, string(decoded)
 	case "v2rayn":
 		decoded, ok := decodeBase64Flexible(strings.TrimSpace(authority))
 		if !ok {
@@ -425,45 +431,45 @@ func parseMapperURL(rawURI string) mapperURL {
 	return out
 }
 
-func mapperINIValues(text string) map[string]any {
-	sections := map[string]map[string]any{}
-	section := ""
-	for _, raw := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+// Keep the common interface and each peer's independent source fields. INI
+// values are text: only the mapper record decides which numbers to coerce.
+func mapperINIValues(text string, commentRule map[string]any) (iface map[string]any, peers []map[string]any, comment string) {
+	var current map[string]any
+	for _, raw := range strings.Split(text, "\n") {
 		line := strings.TrimSpace(raw)
-		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+		if line == "" {
 			continue
 		}
-		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
-			section = strings.TrimSpace(line[1 : len(line)-1])
-			if _, ok := sections[section]; !ok {
-				sections[section] = map[string]any{}
+		if strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+			if current != nil && len(peers) == 1 && len(current) == 0 && comment == "" {
+				name := strings.TrimSpace(line[1:])
+				if reject := stringValue(commentRule["require_no"]); reject == "" || !strings.Contains(name, reject) {
+					comment = name
+				}
 			}
 			continue
 		}
-		key, value, ok := strings.Cut(line, "=")
-		if !ok || section == "" {
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			section := strings.ToLower(strings.TrimSpace(line[1 : len(line)-1]))
+			current = map[string]any{}
+			switch {
+			case section == "interface":
+				if iface != nil {
+					return // Only the first interface belongs to this endpoint.
+				}
+				iface = current
+			case section == "peer" || strings.HasPrefix(section, "peer "):
+				peers = append(peers, current)
+			default:
+				current = nil
+			}
 			continue
 		}
-		sections[section][strings.TrimSpace(key)] = parseScalar(strings.TrimSpace(value))
-	}
-	root := map[string]any{"ini": map[string]any{}}
-	if fields := sections["Interface"]; fields != nil {
-		root["Interface"] = fields
-		root["ini"].(map[string]any)["Interface"] = fields
-	}
-	peers := []any{}
-	for name, fields := range sections {
-		if strings.EqualFold(name, "Peer") || strings.HasPrefix(strings.ToLower(name), "peer ") {
-			peers = append(peers, fields)
+		if key, value, ok := strings.Cut(line, "="); ok && current != nil {
+			current[strings.ToLower(strings.TrimSpace(key))] = strings.TrimSpace(value)
 		}
 	}
-	if len(peers) > 0 {
-		root["Peer"] = peers[0]
-		root["Peers"] = peers
-		root["ini"].(map[string]any)["Peer"] = peers[0]
-		root["ini"].(map[string]any)["Peers"] = peers
-	}
-	return root
+	return
 }
 
 func splitMapperHostPort(hostport string) (string, string) {
@@ -575,10 +581,8 @@ func executeMapper(state *mapperState, protocol *registryProtocol, dialect strin
 		}
 	}
 	plan := buildMapperPlan(state, protocol, dialect, mapper)
+	state.written = make(map[string]bool)
 	for i := range plan {
-		if plan[i].key == "security" && plan[i].priority == 0 {
-			plan[i].priority = 10
-		}
 		record := plan[i].record
 		if record["materialize_default"] == true && record["default"] == nil && record["default_when"] == nil {
 			if _, hasSets := record["sets"]; hasSets {
@@ -606,6 +610,16 @@ func executeMapper(state *mapperState, protocol *registryProtocol, dialect strin
 				continue
 			}
 			evaluateMapperRecord(state, item.record)
+		}
+	}
+	// default_from reads the finished body. It must not claim a path before
+	// another record has had a chance to supply an explicit value.
+	for _, record := range state.fallbacks {
+		if _, exists := getPath(state.entry, stringValue(record["maps_to"])); exists || !conditionMatches(record["when"], state) {
+			continue
+		}
+		if value, ok := getSourcePath(stringValue(record["default_from"]), *state); ok && !isEmptyScalar(value) {
+			applyMapperValue(state, record, value)
 		}
 	}
 	return nil
@@ -652,8 +666,50 @@ func buildMapperPlan(state *mapperState, protocol *registryProtocol, dialect str
 			collectMapperPlan(block, state.reg.sharedOrder[parts[0]], "blocks."+parts[1], false, &plan)
 		}
 	}
-	collectMapperPlan(mapper, protocol.order, "mappers."+dialect, false, &plan)
-	return plan
+	var local []mapperRecord
+	collectMapperPlan(mapper, protocol.order, "mappers."+dialect, false, &local)
+	// A protocol can narrow an included record to specific forms. Compare
+	// all declared source names, not just the source for the current form:
+	// a legacy-only override must suppress the generic selector on v2rayN.
+	overrides := map[string]map[string]bool{}
+	for _, item := range local {
+		if item.record["merge"] == "overwrite" {
+			// A guarded overwrite refines the preceding rule when it fires.
+			continue
+		}
+		if overrides[item.key] == nil {
+			overrides[item.key] = map[string]bool{}
+		}
+		overrides[item.key][mapperSourceSet(item.record["source"])] = true
+	}
+	included := plan[:0]
+	for _, item := range plan {
+		if !overrides[item.key][mapperSourceSet(item.record["source"])] {
+			included = append(included, item)
+		}
+	}
+	return append(included, local...)
+}
+
+func mapperSourceSet(spec any) string {
+	names := map[string]bool{}
+	if forms, ok := spec.(map[string]any); ok {
+		for _, sources := range forms {
+			for _, name := range sourceList(sources) {
+				names[name] = true
+			}
+		}
+	} else {
+		for _, name := range sourceList(spec) {
+			names[name] = true
+		}
+	}
+	keys := make([]string, 0, len(names))
+	for name := range names {
+		keys = append(keys, name)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, "\x00")
 }
 
 func sourceList(value any) []string {
@@ -836,15 +892,19 @@ func applyMapperOverlays(state *mapperState, mapper map[string]any) {
 			}
 			switch typed := value.(type) {
 			case map[string]any:
-				parsed = typed
+				parsed = cloneMap(typed)
 			case string:
+				// queryFold already unescaped the outer URI. Only peel another
+				// layer if this isn't JSON yet; keep literal '+' and '%' in JSON.
 				text := typed
-				for _, mode := range decodes {
-					if mode == "percent" {
-						text = percentDecode(text)
+				if !json.Valid([]byte(text)) {
+					for _, mode := range decodes {
+						if mode == "percent" {
+							text = percentDecodeExceptPlus(text)
+						}
 					}
 				}
-				if err := decodeJSONInto([]byte(text), &parsed); err != nil {
+				if !json.Valid([]byte(text)) || decodeJSONInto([]byte(text), &parsed) != nil {
 					parsed = nil
 				}
 			}
@@ -923,6 +983,9 @@ func evaluateMapperRecord(state *mapperState, record map[string]any) {
 		if !ok {
 			continue
 		}
+		if isEmptyScalar(value) && record["default_from"] != nil {
+			continue // An empty name does not hide the next source or fallback.
+		}
 		value = decodeMapperExtra(value, record)
 		if !conditionMatchesValue(record["when"], state, value) {
 			continue
@@ -939,7 +1002,7 @@ func evaluateMapperRecord(state *mapperState, record map[string]any) {
 				extracted = extractMapperPairList(value, record, state)
 			} else {
 				var extractionOK bool
-				extracted, extractionOK = applyMapperExtract(state, value, extraction)
+				extracted, extractionOK = applyMapperExtract(state, value, extraction, fieldMap(record, "on_no_match"))
 				if !extractionOK {
 					continue
 				}
@@ -971,7 +1034,7 @@ func evaluateMapperRecord(state *mapperState, record map[string]any) {
 	if !found {
 		action := stringValue(onInvalid["action"])
 		switch {
-		case invalidSeen && action == "drop_node":
+		case invalidSeen && (action == "drop_node" || (action == "drop" && record["selector"] == true)):
 			state.dropNode = true
 			state.dropReason = stringValue(onInvalid["code"])
 			return
@@ -980,10 +1043,9 @@ func evaluateMapperRecord(state *mapperState, record map[string]any) {
 		case invalidSeen && action == "coerce":
 			chosen, found = onInvalid["value"], true
 		case action == "default_from" || !invalidSeen:
-			if df := stringValue(record["default_from"]); df != "" {
-				if value, ok := getSourcePath(df, *state); ok && !isEmptyScalar(value) {
-					chosen, found = value, true
-				}
+			if stringValue(record["default_from"]) != "" {
+				state.fallbacks = append(state.fallbacks, record)
+				return
 			}
 		}
 	}
@@ -1021,17 +1083,17 @@ func evaluateMapperRecord(state *mapperState, record map[string]any) {
 		}
 		return
 	}
-	if sets, ok := record["sets"].(map[string]any); ok {
-		key := mapperSetKey(chosenSource)
-		if selected, ok := sets[key].(map[string]any); ok {
-			applyMapperSets(state, selected)
-		}
+	if chosen == nil {
+		return // An explicit null in value_map is a valid no-write.
+	}
+	if omit, exists := record["omit_default"]; exists && scalarEqual(chosen, omit) {
+		return
 	}
 	if splitInto, ok := record["split_into"].(map[string]any); ok {
 		applyMapperSplitInto(state, chosen, splitInto)
 		return
 	}
-	applyMapperValue(state, record, chosen)
+	applyMapperValue(state, record, chosen, chosenSource)
 }
 
 func mapperInvalidWhen(record map[string]any, value any, state *mapperState) bool {
@@ -1158,15 +1220,11 @@ func getSourcePath(pathName string, state mapperState) (any, bool) {
 		}
 		return nil, false
 	}
-	if strings.HasPrefix(pathName, "extra.") {
-		rest := strings.TrimPrefix(pathName, "extra.")
-		name, nested, found := strings.Cut(rest, ".")
-		overlay := state.input.overlays[name]
-		if !found {
-			value, exists := overlay[rest]
-			return value, exists && value != nil
+	if name, nested, ok := strings.Cut(pathName, "."); ok {
+		if overlay, exists := state.input.overlays[name]; exists {
+			value, found := getPathFold(overlay, nested)
+			return value, found && value != nil
 		}
-		return getPathFold(overlay, nested)
 	}
 	if strings.HasPrefix(pathName, "ini.") {
 		return getPathFold(state.input.root, strings.TrimPrefix(pathName, "ini."))
@@ -1335,7 +1393,7 @@ func extractMapperPairList(value any, record map[string]any, state *mapperState)
 	return result
 }
 
-func applyMapperExtract(state *mapperState, value any, extraction map[string]any) (any, bool) {
+func applyMapperExtract(state *mapperState, value any, extraction, fallback map[string]any) (any, bool) {
 	if object, ok := value.(map[string]any); ok {
 		return object, true
 	}
@@ -1372,6 +1430,13 @@ func applyMapperExtract(state *mapperState, value any, extraction map[string]any
 	}
 	match := re.FindStringSubmatch(stringValue(value))
 	if match == nil {
+		if fallback["action"] == "take_all" && stringValue(fallback["into"]) != "" && !isEmptyScalar(value) {
+			setMapperPath(state.entry, stringValue(fallback["into"]), value)
+			for path, v := range fieldMap(fallback, "defaults") {
+				setMapperPath(state.entry, path, normalizeIntegral(v))
+			}
+			return value, true
+		}
 		return value, false
 	}
 	fields := extractFields(re, match)
@@ -1382,8 +1447,9 @@ func applyMapperExtract(state *mapperState, value any, extraction map[string]any
 		}
 		switch typed := target.(type) {
 		case string:
-			if groupValue != "" {
+			if groupValue != "" && !state.written[typed] {
 				setPath(state.entry, typed, groupValue)
+				state.written[typed] = true
 			}
 		case map[string]any:
 			if groupValue == "" {
@@ -1418,7 +1484,11 @@ func applyMapperExtract(state *mapperState, value any, extraction map[string]any
 				}
 			}
 			if pathName != "" {
+				if state.written[pathName] {
+					continue
+				}
 				setMapperPath(state.entry, pathName, valueToSet)
+				state.written[pathName] = true
 			}
 			applyMapperImplies(state, typed["implies"])
 		}
@@ -1465,7 +1535,18 @@ func applyMapperSplitInto(state *mapperState, value any, split map[string]any) {
 	}
 }
 
-func applyMapperValue(state *mapperState, record map[string]any, value any) {
+func applyMapperValue(state *mapperState, record map[string]any, value any, source ...any) {
+	sets, _ := record["sets"].(map[string]any)
+	selected, _ := sets[mapperSetKey(value)].(map[string]any)
+	if len(source) != 0 && source[0] != nil {
+		raw := source[0]
+		if norm := stringValue(record["normalize"]); norm != "" {
+			raw = normalizeMapperValue(raw, norm)
+		}
+		if branch, ok := sets[mapperSetKey(raw)].(map[string]any); ok {
+			selected = branch // e.g. h2 selects TLS before mapping to http.
+		}
+	}
 	maps, _ := record["maps_to"].(string)
 	if maps == "private_key_path" || maps == "client_version" {
 		return
@@ -1474,29 +1555,19 @@ func applyMapperValue(state *mapperState, record map[string]any, value any) {
 		if on, ok := record["on_present"].(map[string]any); ok {
 			state.diags = append(state.diags, Diagnostic{Code: stringValue(on["code"]), Severity: "info", Message: "contract mapper noted an intentionally unmaterialized field"})
 		}
-		if sets, ok := record["sets"].(map[string]any); ok {
-			key := mapperSetKey(value)
-			if selected, ok := sets[key].(map[string]any); ok {
-				applyMapperSets(state, selected)
-			}
-		}
+		applyMapperSets(state, selected)
 		return
 	}
 	if value == nil {
-		deletePath(state.entry, maps)
 		return
 	}
 	if isEmptyScalar(value) {
-		sets, hasSets := record["sets"].(map[string]any)
-		if hasSets {
-			if selected, ok := sets[""].(map[string]any); ok {
-				applyMapperSets(state, selected)
-				return
-			}
+		if selected != nil {
+			applyMapperSets(state, selected)
+			return
 		}
 		if _, optional := record["default"]; !optional {
-			deletePath(state.entry, maps)
-			return
+			return // No write; only sets with a null target remove an existing path.
 		}
 	}
 	switch stringValue(record["merge"]) {
@@ -1504,19 +1575,18 @@ func applyMapperValue(state *mapperState, record map[string]any, value any) {
 		if previous, exists := getPath(state.entry, maps); exists {
 			value = appendMapperValues(previous, value)
 		}
-	case "keep_first":
-		if _, exists := getPath(state.entry, maps); exists {
+	case "overwrite":
+		// Explicit override of a prior mapped value.
+	default: // keep_first
+		if state.written[maps] {
 			return
 		}
 	}
 	setMapperPath(state.entry, maps, value)
+	state.written[maps] = true
 
 	applyMapperImplies(state, record["implies"])
-	if sets, ok := record["sets"].(map[string]any); ok {
-		if selected, ok := sets[mapperSetKey(value)].(map[string]any); ok {
-			applyMapperSets(state, selected)
-		}
-	}
+	applyMapperSets(state, selected)
 }
 
 // mapperSetKey renders a mapped value as the key spelling used by `sets`
@@ -1742,22 +1812,22 @@ func coerceMapperValue(v any, record map[string]any, reg *registry) (any, bool) 
 				}
 			}
 			if !exists {
-				if _, invalidPolicy := record["on_invalid"]; invalidPolicy {
+				allowed, _ := record["allow"].([]any)
+				if _, invalidPolicy := record["on_invalid"]; invalidPolicy && !containsAny(allowed, v) {
 					return nil, false
 				}
-				return v, true
+			} else if mapped == nil {
+				return nil, true
+			} else {
+				v = mapped
 			}
-			if mapped == nil {
-				return nil, false
-			}
-			v = mapped
 		}
 	}
 	switch stringValue(record["type"]) {
 	case "int":
 		if number := intValue(v); number != nil {
 			v = number
-		} else if stringValue(v) != "" {
+		} else {
 			return nil, false
 		}
 	case "duration":
@@ -1800,13 +1870,17 @@ func normalizeMapperValue(v any, norm string) any {
 	case "base64_std":
 		return normalizeBase64Std(stringValue(v))
 	case "base64_rawurl":
-		return strings.TrimRight(stringValue(v), "=")
+		if decoded, ok := decodeBase64Flexible(stringValue(v)); ok {
+			return base64.RawURLEncoding.EncodeToString(decoded)
+		}
 	case "hex_only":
 		return normalizeHexOnly(stringValue(v))
 	case "cidr_prefix", "cidr_masked":
 		return normalizeCIDR(stringValue(v))
 	case "range_order":
-		return normalizeRangeOrder(stringValue(v))
+		if text, ok := v.(string); ok {
+			return normalizeRangeOrder(text)
+		}
 	}
 	return v
 }
@@ -2006,12 +2080,8 @@ valueMapResolved:
 			if best != "" {
 				return prefixes[best], true
 			}
-			for _, canonical := range prefixes {
-				if strings.EqualFold(stringValue(canonical), normalized) {
-					return canonical, true
-				}
-			}
-			return nil, false
+			// Prefix tables translate aliases; the body enum judges other spellings.
+			return value, true
 		}
 	}
 	if list, ok := cur.([]any); ok {
@@ -2071,35 +2141,31 @@ func conditionMatchesValue(raw any, state *mapperState, value any) bool {
 			}
 			continue
 		}
-		if key == "any_set" {
-			paths, ok := want.([]any)
-			if !ok {
-				return false
-			}
-			matched := false
-			for _, rawPath := range paths {
-				pathName := stringValue(rawPath)
-				if pathName == "" {
-					continue
-				}
-				if _, exists := getSourcePath(pathName, *state); exists {
-					matched = true
-					break
-				}
-			}
-			if !matched {
-				return false
-			}
+		if key == "$impl" {
 			continue
 		}
-		if key == "source_kind" {
-			kinds, ok := want.([]any)
-			if !ok || !containsAny(kinds, state.input.scheme) {
+		if key == "any_set" || key == "source_kind" {
+			// Source kind and body markers are alternative evidence. A marker
+			// in the input still counts after its malformed body field is dropped.
+			if !mapperAnyPathSet(state, m["any_set"]) && !mapperSourceKindMatches(state, m["source_kind"]) {
 				return false
 			}
 			continue
 		}
 		got, exists := getSourcePath(key, *state)
+		// URL selectors use the empty spelling as the absent-query branch,
+		// both for equality (security) and for membership (raw type). Keep
+		// the actual existence flag for explicit present/absent predicates.
+		if !exists && strings.HasPrefix(key, "query.") {
+			if text, ok := want.(string); ok && text == "" {
+				continue
+			}
+			if rule, ok := want.(map[string]any); ok && rule["present"] == nil {
+				if _, ok := rule["in"].([]any); ok {
+					got, exists = "", true
+				}
+			}
+		}
 		if !conditionValueMatches(want, got, exists) {
 			return false
 		}
@@ -2367,18 +2433,32 @@ func sanitizeMapperBody(state *mapperState, protocol map[string]any) {
 	if len(fields) == 0 {
 		return
 	}
-	dropParent := sanitizeMapperFields(state, state.entry, fields, "")
-	if dropParent {
+	wireguard := stringValue(protocol["singbox_type"]) == "wireguard"
+	if wireguard {
+		prepareWireGuardFields(state, state.entry, body, "")
+	}
+	var repairs []func()
+	if sanitizeMapperFields(state, state.entry, body, "", &repairs) {
 		state.dropNode = true
-		state.dropReason = "field_missing"
+		if state.dropReason == "" {
+			state.dropReason = "field_missing"
+		}
+	}
+	// Conditional replacements must see the surviving body, not a rejected sibling.
+	for _, repair := range repairs {
+		repair()
+	}
+	if wireguard && !state.dropNode {
+		checkWireGuardRelations(state, body)
 	}
 }
 
 // sanitizeMapperFields returns true when the enclosing object has to be
 // dropped because a nested required field is absent.
-func sanitizeMapperFields(state *mapperState, target map[string]any, fields map[string]any, prefix string) bool {
-	for name, raw := range fields {
-		field, ok := raw.(map[string]any)
+func sanitizeMapperFields(state *mapperState, target, schema map[string]any, prefix string, repairs *[]func()) bool {
+	fields := fieldMap(schema, "fields")
+	for _, name := range orderedKeys(fields, stringSlice(schema["order"])) {
+		field, ok := fields[name].(map[string]any)
 		if !ok {
 			continue
 		}
@@ -2415,13 +2495,6 @@ func sanitizeMapperFields(state *mapperState, target map[string]any, fields map[
 			}
 		}
 		if !exists {
-			if required, _ := field["required"].(bool); required {
-				if form, ok := field["form"].(map[string]any); ok && stringValue(form["block"]) != "" {
-					return true
-				}
-				state.dropNode = true
-				state.dropReason = "field_missing"
-			}
 			continue
 		}
 		if absent, ok := field["absent_values"].([]any); ok && containsAny(absent, value) {
@@ -2490,10 +2563,6 @@ func sanitizeMapperFields(state *mapperState, target map[string]any, fields map[
 			}
 		}
 		if values, ok := field["values"].([]any); ok && (typ == "enum" || typ == "alias_enum") && !containsAny(values, value) {
-			if onInvalid := fieldMap(field, "on_invalid"); stringValue(onInvalid["action"]) == "drop" {
-				delete(target, name)
-				continue
-			}
 			if handleMapperInvalid(state, target, name, pathName, field, fieldMap(field, "on_invalid"), value) {
 				continue
 			}
@@ -2505,13 +2574,27 @@ func sanitizeMapperFields(state *mapperState, target map[string]any, fields map[
 				}
 			}
 		}
-		if format := stringValue(field["format"]); format != "" && !mapperFormatValid(format, value) {
+		if field["len_parity"] == "even" && len(stringValue(value))%2 != 0 {
 			if handleMapperInvalid(state, target, name, pathName, field, fieldMap(field, "on_invalid"), value) {
 				continue
 			}
 		}
-		if coerce, ok := field["coerce_when"].(map[string]any); ok && containsAny(stringSliceAny(coerce["values"]), value) && conditionMatches(coerce["when"], state) {
-			value = coerce["value"]
+		if format := stringValue(field["format"]); format != "" && !mapperFormatValid(format, value) {
+			policy := fieldMap(field, "on_invalid")
+			if policy == nil && field["core_rejects"] == true {
+				policy = map[string]any{"action": "drop"}
+			}
+			if handleMapperInvalid(state, target, name, pathName, field, policy, value) {
+				continue
+			}
+		}
+		if coerce := fieldMap(field, "coerce_when"); coerce != nil {
+			*repairs = append(*repairs, func() {
+				if current, exists := target[name]; exists && containsAny(stringSliceAny(coerce["values"]), current) && conditionMatches(coerce["when"], state) {
+					target[name] = coerce["value"]
+					state.diags = append(state.diags, Diagnostic{Code: stringValue(coerce["code"]), Severity: "warning", Path: pathName, Value: current})
+				}
+			})
 		}
 		if advisory, ok := field["advisory"].([]any); ok {
 			for _, item := range advisory {
@@ -2555,25 +2638,30 @@ func sanitizeMapperFields(state *mapperState, target map[string]any, fields map[
 			}
 		}
 		if max := numberValue(field["max"]); max != nil {
-			if current := numberValue(value); current != nil && *current > *max {
+			current := numberValue(value)
+			if typ == "string" {
+				length := float64(len([]rune(stringValue(value))))
+				current = &length
+			}
+			if current != nil && *current > *max {
 				if handleMapperInvalid(state, target, name, pathName, field, fieldMap(field, "on_invalid"), value) {
 					continue
 				}
 			}
 		}
-		if nested, ok := field["fields"].(map[string]any); ok {
+		if fieldMap(field, "fields") != nil {
 			if object, ok := value.(map[string]any); ok {
-				if sanitizeMapperFields(state, object, nested, pathName) {
+				if sanitizeMapperFields(state, object, field, pathName, repairs) {
 					delete(target, name)
 					continue
 				}
 				value = object
 			}
 		}
-		if stringValue(field["ref"]) == "tls" {
-			if object, ok := value.(map[string]any); ok {
-				sanitizeSharedMapperBlock(state, object, "tls", pathName)
-				value = object
+		if ref := stringValue(field["ref"]); ref == "tls" || ref == "transports" {
+			if object, ok := value.(map[string]any); ok && sanitizeSharedMapperBlock(state, object, ref, pathName, repairs) {
+				delete(target, name)
+				continue
 			}
 		}
 		if items, ok := field["items"].(map[string]any); ok {
@@ -2582,7 +2670,7 @@ func sanitizeMapperFields(state *mapperState, target map[string]any, fields map[
 				cleaned := []any{}
 				for _, item := range list {
 					if object, ok := item.(map[string]any); ok && itemFields != nil {
-						if sanitizeMapperFields(state, object, itemFields, pathName) || len(object) == 0 {
+						if sanitizeMapperFields(state, object, items, pathName, repairs) || len(object) == 0 {
 							continue
 						}
 					}
@@ -2634,19 +2722,20 @@ func sanitizeMapperFields(state *mapperState, target map[string]any, fields map[
 		if requires, ok := field["requires"].([]any); ok {
 			missing := false
 			for _, item := range requires {
-				if rule, ok := item.(map[string]any); ok {
+				if rule, ok := item.(map[string]any); ok && conditionMatches(rule["when"], state) {
 					if requiredPath := stringValue(rule["path"]); requiredPath != "" {
 						present, _ := getPath(state.entry, requiredPath)
-						equals := stringValue(rule["equals"])
-						if wantSet, ok := rule["set"].(bool); ok && wantSet && isEmptyScalar(present) {
-							setPath(state.entry, requiredPath, true)
-						} else {
-							if equals != "" && mapperSetKey(present) != equals {
-								missing = true
+						if desired, exists := rule["set"]; exists {
+							if !scalarEqual(desired, present) {
+								setMapperPath(state.entry, requiredPath, desired)
 							}
-							if equals == "" && isEmptyScalar(present) {
-								missing = true
-							}
+							continue
+						}
+						expected, exact := rule["equals"]
+						if isEmptyScalar(present) || (exact && !scalarEqual(present, expected)) {
+							state.diags = append(state.diags, Diagnostic{Code: stringValue(rule["code"]), Severity: "warning", Path: pathName, Value: value})
+							missing = true
+							break
 						}
 					}
 				}
@@ -2657,6 +2746,16 @@ func sanitizeMapperFields(state *mapperState, target map[string]any, fields map[
 			}
 		}
 		target[name] = value
+	}
+	// A required field may have been removed by normalization or validation.
+	for name, raw := range fields {
+		field, _ := raw.(map[string]any)
+		if field["required"] == true && isEmptyScalar(target[name]) {
+			if policy := fieldMap(field, "on_invalid"); policy["action"] == "drop_node" && !state.dropNode {
+				handleMapperInvalid(state, target, name, strings.TrimPrefix(prefix+"."+name, "."), field, policy, nil)
+			}
+			return true
+		}
 	}
 	return false
 }
@@ -2728,6 +2827,9 @@ func mapperFormatValid(format string, value any) bool {
 			return len(decoded) == 32
 		}
 		return true
+	case "url_path":
+		_, err := url.Parse(text)
+		return err == nil
 	case "uuid":
 		return regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`).MatchString(text)
 	case "host":
@@ -2738,33 +2840,22 @@ func mapperFormatValid(format string, value any) bool {
 	return true
 }
 
-// sanitizeSharedMapperBlock applies the body.field rules of a registry shared
-// block (tls, dialer, multiplex) to a nested object, honouring absent_when.
-func sanitizeSharedMapperBlock(state *mapperState, object map[string]any, blockName, pathName string) {
+func sanitizeSharedMapperBlock(state *mapperState, object map[string]any, blockName, pathName string, repairs *[]func()) bool {
 	shared := state.reg.shared[blockName]
 	if shared == nil {
-		return
+		return false
 	}
 	body, _ := shared["body"].(map[string]any)
 	if body == nil {
-		return
+		return false
 	}
-	if enabled, ok := object["enabled"].(bool); ok && !enabled {
-		absentWhen, _ := body["absent_when"].(map[string]any)
-		if raw, exists := absentWhen["enabled"]; exists {
-			if expected, ok := raw.(bool); ok && expected == false {
-				for key := range object {
-					delete(object, key)
-				}
-				return
-			}
-		}
+	if enabled, ok := object["enabled"].(bool); ok && !enabled && fieldMap(body, "absent_when")["enabled"] == false {
+		return true
 	}
-	fields, _ := body["fields"].(map[string]any)
-	if len(fields) == 0 {
-		return
+	if discriminator := stringValue(body["discriminator"]); discriminator != "" {
+		body = fieldMap(fieldMap(body, "variants"), stringValue(object[discriminator]))
 	}
-	sanitizeMapperFields(state, object, fields, pathName)
+	return sanitizeMapperFields(state, object, body, pathName, repairs)
 }
 
 func normalizeIntegral(v any) any {
