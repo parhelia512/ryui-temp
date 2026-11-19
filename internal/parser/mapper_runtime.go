@@ -683,13 +683,14 @@ func collectMapperPlan(section map[string]any, orders map[string][]string, pathN
 				collectMapperPlan(params, orders, pathName+".params", plan)
 			}
 			continue
+		case "$selector":
+			if selector, ok := section[key].(map[string]any); ok {
+				collectMapperPlan(selector, orders, pathName+".$selector", plan)
+			}
+			continue
 		}
 		record, ok := section[key].(map[string]any)
 		if !ok {
-			continue
-		}
-		if key == "$selector" {
-			collectMapperPlan(record, orders, pathName+".$selector", plan)
 			continue
 		}
 		if _, hasSource := record["source"]; !hasSource {
@@ -717,7 +718,8 @@ func getPath(root map[string]any, pathName string) (any, bool) {
 		return nil, false
 	}
 	var current any = root
-	for _, part := range strings.Split(strings.TrimPrefix(pathName, "."), ".") {
+	for _, rawPart := range strings.Split(strings.TrimPrefix(pathName, "."), ".") {
+		part := strings.TrimSuffix(rawPart, "[]")
 		if index, err := strconv.Atoi(part); err == nil {
 			list, ok := current.([]any)
 			if !ok || index < 0 || index >= len(list) {
@@ -735,8 +737,53 @@ func getPath(root map[string]any, pathName string) (any, bool) {
 			return nil, false
 		}
 		current = value
+		if strings.HasSuffix(rawPart, "[]") {
+			list, ok := current.([]any)
+			if !ok || len(list) == 0 {
+				return nil, false
+			}
+			current = list[0]
+		}
 	}
 	return current, true
+}
+
+func setMapperPath(root map[string]any, pathName string, value any) {
+	parts := strings.Split(pathName, ".")
+	current := root
+	for index, rawPart := range parts {
+		last := index == len(parts)-1
+		isList := strings.HasSuffix(rawPart, "[]")
+		key := strings.TrimSuffix(rawPart, "[]")
+		if last {
+			if isList {
+				current[key] = append(mapperAnyList(current[key]), value)
+			} else {
+				current[key] = value
+			}
+			return
+		}
+		if isList {
+			list, _ := current[key].([]any)
+			if len(list) == 0 {
+				list = []any{map[string]any{}}
+				current[key] = list
+			}
+			next, _ := list[0].(map[string]any)
+			if next == nil {
+				next = map[string]any{}
+				list[0] = next
+			}
+			current = next
+			continue
+		}
+		next, _ := current[key].(map[string]any)
+		if next == nil {
+			next = map[string]any{}
+			current[key] = next
+		}
+		current = next
+	}
 }
 
 func evaluateMapperRecord(state *mapperState, record map[string]any) {
@@ -828,20 +875,23 @@ func evaluateMapperRecord(state *mapperState, record map[string]any) {
 			}
 		}
 	}
-	if !found {
-		if materialize, _ := record["materialize_default"].(bool); materialize {
-			if value, ok := record["default"]; ok {
-				chosen, found = value, true
-			} else if defaultWhen, ok := record["default_when"].(map[string]any); ok && conditionMatches(defaultWhen["when"], state) {
-				chosen, found = defaultWhen["value"], true
-			} else if sets, ok := record["sets"].(map[string]any); ok {
-				_, found = sets[""]
-				if found {
-					chosen = ""
-				}
+	if !found && record["materialize_default"] == true {
+		var defaultValue any
+		hasDefault := false
+		if value, ok := record["default"]; ok {
+			defaultValue, hasDefault = value, true
+		} else if defaultWhen, ok := record["default_when"].(map[string]any); ok && defaultWhen["absent"] == true && conditionMatches(defaultWhen["when"], state) {
+			defaultValue, hasDefault = defaultWhen["value"], true
+		} else if sets, ok := record["sets"].(map[string]any); ok {
+			defaultValue, hasDefault = sets[""]
+		}
+		if hasDefault {
+			if mapped, ok := coerceMapperValue(defaultValue, record, state.reg); ok {
+				chosen, chosenSource, found = mapped, nil, true
 			}
 		}
 	}
+
 	if !found {
 		if selector, _ := record["selector"].(bool); selector {
 			if sets, ok := record["sets"].(map[string]any); ok {
@@ -1195,7 +1245,10 @@ func applyMapperExtract(state *mapperState, value any, extraction map[string]any
 	}
 	fields := extractFields(re, match)
 	for name, target := range into {
-		groupValue := fields[name]
+		groupValue, exists := fields[name]
+		if !exists {
+			continue
+		}
 		switch typed := target.(type) {
 		case string:
 			if groupValue != "" {
@@ -1231,7 +1284,7 @@ func applyMapperExtract(state *mapperState, value any, extraction map[string]any
 				}
 			}
 			if pathName != "" {
-				setPath(state.entry, pathName, valueToSet)
+				setMapperPath(state.entry, pathName, valueToSet)
 			}
 		}
 	}
@@ -1272,7 +1325,7 @@ func applyMapperSplitInto(state *mapperState, value any, split map[string]any) {
 			break
 		}
 		if selected != "" {
-			setPath(state.entry, target, selected)
+			setMapperPath(state.entry, target, selected)
 		}
 	}
 }
@@ -1321,7 +1374,8 @@ func applyMapperValue(state *mapperState, record map[string]any, value any) {
 			return
 		}
 	}
-	setPath(state.entry, maps, value)
+	setMapperPath(state.entry, maps, value)
+
 	applyMapperImplies(state, record["implies"])
 	if sets, ok := record["sets"].(map[string]any); ok {
 		if selected, ok := sets[mapperSetKey(value)].(map[string]any); ok {
@@ -1377,11 +1431,11 @@ func applyMapperImplies(state *mapperState, raw any) {
 	for k, v := range implies {
 		if vm, ok := v.(map[string]any); ok {
 			if val, ok := vm["value"]; ok {
-				setPath(state.entry, k, val)
+				setMapperPath(state.entry, k, val)
 			}
 			continue
 		}
-		setPath(state.entry, k, v)
+		setMapperPath(state.entry, k, v)
 	}
 }
 
@@ -1391,7 +1445,7 @@ func applyMapperSets(state *mapperState, selected map[string]any) {
 			deletePath(state.entry, k)
 			continue
 		}
-		setPath(state.entry, k, cloneValue(v))
+		setMapperPath(state.entry, k, cloneValue(v))
 	}
 }
 
@@ -1424,15 +1478,41 @@ func mapperStringList(value any) []string {
 
 func deletePath(dst map[string]any, key string) {
 	parts := strings.Split(key, ".")
-	cur := dst
-	for _, p := range parts[:len(parts)-1] {
-		next, ok := cur[p].(map[string]any)
+	current := dst
+	for index, rawPart := range parts {
+		last := index == len(parts)-1
+		isList := strings.HasSuffix(rawPart, "[]")
+		name := strings.TrimSuffix(rawPart, "[]")
+		if last {
+			if isList {
+				delete(current, name)
+			} else {
+				delete(current, name)
+			}
+			return
+		}
+		value, exists := current[name]
+		if !exists {
+			return
+		}
+		if isList {
+			items, ok := value.([]any)
+			if !ok || len(items) == 0 {
+				return
+			}
+			next, _ := items[0].(map[string]any)
+			if next == nil {
+				return
+			}
+			current = next
+			continue
+		}
+		next, ok := value.(map[string]any)
 		if !ok {
 			return
 		}
-		cur = next
+		current = next
 	}
-	delete(cur, parts[len(parts)-1])
 }
 
 func coerceMapperValue(v any, record map[string]any, reg *registry) (any, bool) {
@@ -2150,15 +2230,40 @@ func sanitizeMapperFields(state *mapperState, target map[string]any, fields map[
 		}
 		value, exists := target[name]
 		if !exists {
+			if minWhen, ok := field["min_when"].(map[string]any); ok && minWhen["absent_is_zero"] == true && conditionMatches(minWhen["when"], state) {
+				if minimum := numberValue(minWhen["min"]); minimum != nil && *minimum > 0 && stringValue(minWhen["action"]) == "drop_node" {
+					state.dropNode = true
+					state.dropReason = stringValue(minWhen["code"])
+					state.diags = append(state.diags, Diagnostic{Code: state.dropReason, Severity: "error", Message: "field value is below the conditional minimum", Path: pathName})
+				}
+			}
+			if defaultWhen, ok := field["default_when"].(map[string]any); ok && defaultWhen["absent"] == true && conditionMatches(defaultWhen["when"], state) {
+				value = normalizeIntegral(cloneValue(defaultWhen["value"]))
+				if list, ok := field["list"].(map[string]any); ok {
+					if separator := stringValue(list["sep"]); separator != "" {
+						if text, ok := value.(string); ok {
+							items := []any{}
+							for _, part := range strings.Split(text, separator) {
+								part = strings.TrimSpace(part)
+								if part != "" {
+									items = append(items, part)
+								}
+							}
+							value = items
+						}
+					}
+				}
+				target[name] = value
+				exists = true
+			}
+		}
+		if !exists {
 			if required, _ := field["required"].(bool); required {
 				if form, ok := field["form"].(map[string]any); ok && stringValue(form["block"]) != "" {
 					return true
 				}
 				state.dropNode = true
 				state.dropReason = "field_missing"
-			}
-			if defaultWhen, ok := field["default_when"].(map[string]any); ok && defaultWhen["absent"] == true && conditionMatches(defaultWhen["when"], state) {
-				target[name] = normalizeIntegral(cloneValue(defaultWhen["value"]))
 			}
 			continue
 		}
