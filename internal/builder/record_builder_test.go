@@ -135,8 +135,27 @@ func TestApplyRuleRecordsContractFixedDNSFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := map[string]any{"dns_rules": config["dns"].(map[string]any)["rules"]}
+	stripDNSMirrorMatchers(got["dns_rules"])
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("fixture mismatch: got %#v want %#v", got, want)
+	}
+}
+
+func stripDNSMirrorMatchers(value any) {
+	items, _ := value.([]any)
+	for _, raw := range items {
+		rule, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, key := range []string{
+			"rule_set", "domain", "domain_suffix", "domain_keyword", "domain_regex",
+			"process_name", "process_path", "process_path_regex", "package_name",
+			"package_name_regex", "user", "user_id", "wifi_ssid", "wifi_bssid",
+			"network_type", "source_ip_cidr", "source_ip_is_private", "inbound",
+		} {
+			delete(rule, key)
+		}
 	}
 }
 

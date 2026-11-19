@@ -425,7 +425,7 @@ func budgetFolderMembers(record map[string]any, nodes []budgetNode) ([]budgetNod
 			hasIndex = true
 		}
 	}
-	if !hasIndex && len(members) > 0 && len(nodes) != len(members) {
+	if !hasIndex && len(members) > 0 && len(nodes) > 0 && len(nodes) != len(members) {
 		for _, m := range members {
 			if member, ok := m.(map[string]any); ok && !budgetBool(member, "enabled", true) {
 				return nil, errors.New("folder has disabled members: supply member_index on complete parsed detail maps to count manual priority exactly")

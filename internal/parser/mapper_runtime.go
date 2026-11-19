@@ -76,6 +76,9 @@ func mapContractURI(rawURI string, protocol string, source Source, reg *registry
 		return nil, nil, false
 	}
 	in := mapperInput{root: map[string]any{}, query: queryFold(parsed.queryRaw), scheme: strings.ToLower(parsed.scheme), host: parsed.host, portRaw: parsed.portRaw, path: parsed.path, frag: parsed.frag, form: form}
+	if form == "conf_b64" {
+		in.root = mapperINIValues(stringValue(decoded))
+	}
 	if form == "v2rayn" {
 		root, ok := decoded.(map[string]any)
 		if !ok {
@@ -216,7 +219,22 @@ func decodeMapperForm(rawURI string, uri map[string]any, p *registryProtocol) (s
 	}
 	switch chosen {
 	case "conf_b64":
-		return "conf_b64", mapperURL{}, nil
+		decoded, ok := decodeBase64Flexible(strings.TrimSpace(authority))
+		if !ok {
+			return "", mapperURL{}, nil
+		}
+		text := string(decoded)
+		if !isWGIni(text) {
+			return "", mapperURL{}, nil
+		}
+		root := mapperINIValues(text)
+		parsed := mapperURL{scheme: scheme, frag: mapperFragment(rawURI)}
+		if peer, ok := root["Peer"].(map[string]any); ok {
+			if endpoint := stringValue(peer["Endpoint"]); endpoint != "" {
+				parsed.host, parsed.portRaw = splitMapperHostPort(endpoint)
+			}
+		}
+		return "conf_b64", parsed, text
 	case "v2rayn":
 		decoded, ok := decodeBase64Flexible(strings.TrimSpace(authority))
 		if !ok {
@@ -400,6 +418,47 @@ func parseMapperURL(rawURI string) mapperURL {
 	}
 	out.host, out.portRaw = splitMapperHostPort(body)
 	return out
+}
+
+func mapperINIValues(text string) map[string]any {
+	sections := map[string]map[string]any{}
+	section := ""
+	for _, raw := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+			continue
+		}
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			section = strings.TrimSpace(line[1 : len(line)-1])
+			if _, ok := sections[section]; !ok {
+				sections[section] = map[string]any{}
+			}
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok || section == "" {
+			continue
+		}
+		sections[section][strings.TrimSpace(key)] = parseScalar(strings.TrimSpace(value))
+	}
+	root := map[string]any{"ini": map[string]any{}}
+	if fields := sections["Interface"]; fields != nil {
+		root["Interface"] = fields
+		root["ini"].(map[string]any)["Interface"] = fields
+	}
+	peers := []any{}
+	for name, fields := range sections {
+		if strings.EqualFold(name, "Peer") || strings.HasPrefix(strings.ToLower(name), "peer ") {
+			peers = append(peers, fields)
+		}
+	}
+	if len(peers) > 0 {
+		root["Peer"] = peers[0]
+		root["Peers"] = peers
+		root["ini"].(map[string]any)["Peer"] = peers[0]
+		root["ini"].(map[string]any)["Peers"] = peers
+	}
+	return root
 }
 
 func splitMapperHostPort(hostport string) (string, string) {
@@ -670,6 +729,9 @@ func evaluateMapperRecord(state *mapperState, record map[string]any) {
 			continue
 		}
 		value = decodeMapperExtra(value, record)
+		if !conditionMatchesValue(record["when"], state, value) {
+			continue
+		}
 		if mapperInvalidWhen(record, value, state) {
 			invalidSeen = true
 			if stringValue(onInvalid["action"]) == "default_from" {
@@ -686,6 +748,9 @@ func evaluateMapperRecord(state *mapperState, record map[string]any) {
 		}
 		rawLast = value
 		coerced, valid := coerceMapperValue(value, record, state.reg)
+		if !valid {
+			invalidSeen = true
+		}
 		if valid && mapperRecordValueInvalid(record, coerced) {
 			valid = false
 			invalidSeen = true
@@ -855,6 +920,13 @@ func getSourcePath(pathName string, state mapperState) (any, bool) {
 				return values[len(values)-1], true
 			}
 		}
+		if state.input.form == "v2rayn" {
+			for k, value := range state.input.root {
+				if strings.EqualFold(k, key) && value != nil {
+					return value, true
+				}
+			}
+		}
 		return nil, false
 	}
 	if strings.HasPrefix(pathName, "userinfo.") {
@@ -870,7 +942,10 @@ func getSourcePath(pathName string, state mapperState) (any, bool) {
 		}
 		return nil, false
 	}
-	if strings.HasPrefix(pathName, "json.$base.") {
+		if strings.HasPrefix(pathName, "ini.") {
+			return getPath(state.input.root, strings.TrimPrefix(pathName, "ini."))
+		}
+		if strings.HasPrefix(pathName, "json.$base.") {
 		return getPath(state.input.base, strings.TrimPrefix(pathName, "json.$base."))
 	}
 	if strings.HasPrefix(pathName, "json.") {
@@ -1266,20 +1341,29 @@ func coerceMapperValue(v any, record map[string]any, reg *registry) (any, bool) 
 	} else if norm := stringValue(record["normalize"]); norm != "" {
 		v = normalizeMapperValue(v, norm)
 	}
-	if vm, ok := record["value_map"].(map[string]any); ok {
-		if ref := stringValue(vm["$ref"]); ref != "" {
-			mapped, ok := resolveValueMapRef(reg, ref, stringValue(v))
-			if !ok {
-				return nil, false
+		if vm, ok := record["value_map"].(map[string]any); ok {
+			if ref := stringValue(vm["$ref"]); ref != "" {
+				mapped, ok := resolveValueMapRef(reg, ref, stringValue(v))
+				if !ok {
+					return nil, false
+				}
+				v = mapped
+			} else {
+				mapped, exists := vm[stringValue(v)]
+				if !exists && stringValue(record["value_map_case"]) != "sensitive" {
+					for key, candidate := range vm {
+						if strings.EqualFold(key, stringValue(v)) {
+							mapped, exists = candidate, true
+							break
+						}
+					}
+				}
+				if !exists || mapped == nil {
+					return nil, false
+				}
+				v = mapped
 			}
-			v = mapped
-		} else if mapped, exists := vm[stringValue(v)]; exists {
-			if mapped == nil {
-				return nil, false
-			}
-			v = mapped
 		}
-	}
 	switch stringValue(record["type"]) {
 	case "int":
 		if number := intValue(v); number != nil {
@@ -1577,56 +1661,96 @@ func scalarEqual(left, right any) bool {
 }
 
 func conditionMatches(raw any, state *mapperState) bool {
+	return conditionMatchesValue(raw, state, nil)
+}
+
+func conditionMatchesValue(raw any, state *mapperState, value any) bool {
 	m, ok := raw.(map[string]any)
 	if !ok || len(m) == 0 {
 		return true
 	}
 	for key, want := range m {
 		if key == "$value" {
+			if value == nil {
+				continue
+			}
+			if !conditionValueMatches(want, value, true) {
+				return false
+			}
+			continue
+		}
+		if key == "any_set" {
+			paths, ok := want.([]any)
+			if !ok {
+				return false
+			}
+			matched := false
+			for _, rawPath := range paths {
+				pathName := stringValue(rawPath)
+				if pathName == "" {
+					continue
+				}
+				if _, exists := getSourcePath(pathName, *state); exists {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return false
+			}
+			continue
+		}
+		if key == "source_kind" {
+			kinds, ok := want.([]any)
+			if !ok || !containsAny(kinds, state.input.scheme) {
+				return false
+			}
 			continue
 		}
 		got, exists := getSourcePath(key, *state)
-		if cond, ok := want.(map[string]any); ok {
-			if list, ok := cond["in"].([]any); ok && !containsAny(list, got) {
-				return false
-			}
-			if list, ok := cond["not_in"].([]any); ok && containsAny(list, got) {
-				return false
-			}
-			if present, ok := cond["present"].(bool); ok {
-				if present != exists {
-					return false
-				}
-			}
-			if limit, ok := cond["gt"]; ok {
-				left, right := numberValue(got), numberValue(limit)
-				if left == nil || right == nil || *left <= *right {
-					return false
-				}
-			}
-			if limit, ok := cond["lt"]; ok {
-				left, right := numberValue(got), numberValue(limit)
-				if left == nil || right == nil || *left >= *right {
-					return false
-				}
-			}
-			if pattern := stringValue(cond["matches"]); pattern != "" {
-				if re, err := regexp.Compile(pattern); err != nil || !re.MatchString(stringValue(got)) {
-					return false
-				}
-			}
-			if pattern := stringValue(cond["not_matches"]); pattern != "" {
-				if re, err := regexp.Compile(pattern); err == nil && re.MatchString(stringValue(got)) {
-					return false
-				}
-			}
-			continue
-		}
-		if !exists || !scalarEqual(got, want) {
+		if !conditionValueMatches(want, got, exists) {
 			return false
 		}
 	}
 	return true
+}
+
+func conditionValueMatches(want, got any, exists bool) bool {
+	if cond, ok := want.(map[string]any); ok {
+		if list, ok := cond["in"].([]any); ok && (!exists || !containsAny(list, got)) {
+			return false
+		}
+		if list, ok := cond["not_in"].([]any); ok && exists && containsAny(list, got) {
+			return false
+		}
+		if present, ok := cond["present"].(bool); ok && present != exists {
+			return false
+		}
+		if limit, ok := cond["gt"]; ok {
+			left, right := numberValue(got), numberValue(limit)
+			if left == nil || right == nil || *left <= *right {
+				return false
+			}
+		}
+		if limit, ok := cond["lt"]; ok {
+			left, right := numberValue(got), numberValue(limit)
+			if left == nil || right == nil || *left >= *right {
+				return false
+			}
+		}
+		if pattern := stringValue(cond["matches"]); pattern != "" {
+			if re, err := regexp.Compile(pattern); err != nil || !re.MatchString(stringValue(got)) {
+				return false
+			}
+		}
+		if pattern := stringValue(cond["not_matches"]); pattern != "" {
+			if re, err := regexp.Compile(pattern); err == nil && re.MatchString(stringValue(got)) {
+				return false
+			}
+		}
+		return true
+	}
+	return exists && scalarEqual(got, want)
 }
 
 func numberValue(v any) *float64 {
@@ -1875,7 +1999,7 @@ func sanitizeMapperFields(state *mapperState, target map[string]any, fields map[
 				state.dropNode = true
 				state.dropReason = "field_missing"
 			}
-			if defaultWhen, ok := field["default_when"].(map[string]any); ok && defaultWhen["absent"] == true && !hasKindCondition(defaultWhen) {
+			if defaultWhen, ok := field["default_when"].(map[string]any); ok && defaultWhen["absent"] == true && conditionMatches(defaultWhen["when"], state) {
 				target[name] = normalizeIntegral(cloneValue(defaultWhen["value"]))
 			}
 			continue
@@ -1904,6 +2028,36 @@ func sanitizeMapperFields(state *mapperState, target map[string]any, fields map[
 				continue
 			}
 			value = number
+		}
+		if minWhen, ok := field["min_when"].(map[string]any); ok && conditionMatches(minWhen["when"], state) {
+			current := numberValue(value)
+			if current == nil && minWhen["absent_is_zero"] == true {
+				zero := float64(0)
+				current = &zero
+			}
+			limit := numberValue(minWhen["min"])
+			if limit != nil && (current == nil || *current < *limit) {
+				onInvalid := map[string]any{"action": minWhen["action"], "code": minWhen["code"]}
+				if handleMapperInvalid(state, target, name, pathName, field, onInvalid, value) {
+					continue
+				}
+			}
+		}
+		if maxWhen, ok := field["max_when"].(map[string]any); ok && conditionMatches(maxWhen["when"], state) {
+			current := numberValue(value)
+			limit := numberValue(maxWhen["max"])
+			if limit != nil && current != nil && *current > *limit {
+				action := stringValue(maxWhen["action"])
+				if action == "" {
+					action = "coerce"
+				}
+				onInvalid := map[string]any{"action": action, "code": maxWhen["code"], "value": maxWhen["max"]}
+				if containsAny(stringSliceAny(maxWhen["except_sources"]), state.input.form) {
+					state.diags = append(state.diags, Diagnostic{Code: stringValue(maxWhen["note_code"]), Severity: "info", Path: pathName, Value: value})
+				} else if handleMapperInvalid(state, target, name, pathName, field, onInvalid, value) {
+					continue
+				}
+			}
 		}
 		if forbidden, ok := field["forbidden_for"].([]any); ok && containsAny(forbidden, state.entry["type"]) {
 			delete(target, name)
@@ -1959,19 +2113,20 @@ func sanitizeMapperFields(state *mapperState, target map[string]any, fields map[
 				}
 			}
 		}
-		if itemPattern := stringValue(field["item_pattern"]); itemPattern != "" {
-			if re, err := regexp.Compile(itemPattern); err == nil {
-				if list, ok := value.([]any); ok {
-					filtered := []any{}
-					for _, item := range list {
-						if re.MatchString(stringValue(item)) {
-							filtered = append(filtered, item)
+			if itemPattern := stringValue(field["item_pattern"]); itemPattern != "" {
+				if re, err := regexp.Compile(itemPattern); err == nil {
+					if list, ok := value.([]any); ok {
+						filtered := make([]any, 0, len(list))
+						for _, item := range list {
+							if re.MatchString(stringValue(item)) {
+								filtered = append(filtered, item)
+							}
 						}
+						value = filtered
 					}
-					value = filtered
 				}
 			}
-		}
+
 		if min := numberValue(field["min"]); min != nil {
 			if current := numberValue(value); current != nil && *current < *min {
 				if handleMapperInvalid(state, target, name, pathName, field, fieldMap(field, "on_invalid"), value) {
