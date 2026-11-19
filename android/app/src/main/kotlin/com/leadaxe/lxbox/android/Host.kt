@@ -22,6 +22,7 @@ import android.net.VpnService
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.CancellationSignal
+import android.os.ParcelFileDescriptor
 import android.os.Process
 import android.system.OsConstants
 import android.util.Base64
@@ -46,6 +47,10 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 class LxBoxApplication : Application() {
     override fun onCreate() {
@@ -109,6 +114,7 @@ class Host(private val context: Context) {
     private val callbackLock = Any()
     private var openConnect: OpenConnectCallbackServer? = null
     private val streams = ConcurrentHashMap<String, StreamEntry>()
+    private val appFunctionsScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private data class StreamEntry(
         val input: InputStream? = null,
@@ -144,7 +150,7 @@ class Host(private val context: Context) {
             JSONObject().put("accepted", true).put("consentPending", VpnService.prepare(context) != null)
         }
         "vpn.stop" -> {
-            startCoreService(BoxVpnService.ACTION_STOP, JSONObject())
+            startCoreService(BoxVpnService.ACTION_STOP, "")
             JSONObject().put("accepted", true)
         }
         "vpn.openTun" -> JSONObject().put("fd", openTun(a))
@@ -318,7 +324,11 @@ class Host(private val context: Context) {
             a.optJSONArray("inet6RouteExcludeAddress").nonEmptyStrings()
         if (excluded.isNotEmpty()) {
             if (Build.VERSION.SDK_INT < 33) error("VPN route exclusions require Android 13 or newer")
-            excluded.forEach { builder.excludeRoute(android.net.IpPrefix(it)) }
+            excluded.forEach { raw ->
+                val slash = raw.lastIndexOf('/')
+                require(slash > 0) { "invalid excluded route: $raw" }
+                builder.excludeRoute(android.net.IpPrefix(InetAddress.getByName(raw.substring(0, slash)), raw.substring(slash + 1).toInt()))
+            }
         }
         addPackages(a.optJSONArray("includePackage"), true, builder)
         addPackages(a.optJSONArray("excludePackage"), false, builder)
@@ -345,8 +355,9 @@ class Host(private val context: Context) {
     }
 
     private fun addRoute(builder: VpnService.Builder, raw: String) {
-        val prefix = android.net.IpPrefix(raw)
-        builder.addRoute(prefix)
+        val slash = raw.lastIndexOf('/')
+        require(slash > 0) { "invalid route: $raw" }
+        builder.addRoute(android.net.IpPrefix(InetAddress.getByName(raw.substring(0, slash)), raw.substring(slash + 1).toInt()))
     }
 
     private fun addPackages(values: JSONArray?, allow: Boolean, builder: VpnService.Builder) {
@@ -516,7 +527,7 @@ class Host(private val context: Context) {
         }
     }
 
-    private fun filePick(args: JSONObject): CompletableFuture<JSONObject> {
+    private fun filePick(args: JSONObject): CompletableFuture<Any> {
         val activity = MainActivity.current ?: error("file picking requires a foreground Activity")
         val mimeTypes = args.optJSONArray("mimeTypes").strings().ifEmpty { listOf("*/*") }
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
@@ -904,13 +915,16 @@ class Host(private val context: Context) {
     private fun setAppFunctionsEnabled(enabled: Boolean) {
         LxBoxApplication.prefs.edit().putBoolean("appfunctions_enabled", enabled).commit()
         if (Build.VERSION.SDK_INT >= 36) {
-            runCatching {
-                val manager = androidx.appfunctions.AppFunctionManager.getInstance(context)
-                val state = if (enabled) androidx.appfunctions.AppFunctionManager.APP_FUNCTION_STATE_ENABLED
-                    else androidx.appfunctions.AppFunctionManager.APP_FUNCTION_STATE_DISABLED
-                listOf("com.leadaxe.lxbox.android.LxBoxAppFunctions#startVpn", "com.leadaxe.lxbox.android.LxBoxAppFunctions#stopVpn", "com.leadaxe.lxbox.android.LxBoxAppFunctions#getVpnStatus")
-                    .forEach { manager.setAppFunctionEnabled(it, state) }
-            }.onFailure { Log.w(TAG, "could not update AppFunctions system state", it) }
+            appFunctionsScope.launch {
+                runCatching {
+                    val manager = androidx.appfunctions.AppFunctionManager.getInstance(context)
+                        ?: return@runCatching
+                    val state = if (enabled) androidx.appfunctions.AppFunctionManager.APP_FUNCTION_STATE_ENABLED
+                        else androidx.appfunctions.AppFunctionManager.APP_FUNCTION_STATE_DISABLED
+                    listOf("com.leadaxe.lxbox.android.LxBoxAppFunctions#startVpn", "com.leadaxe.lxbox.android.LxBoxAppFunctions#stopVpn", "com.leadaxe.lxbox.android.LxBoxAppFunctions#getVpnStatus")
+                        .forEach { manager.setAppFunctionEnabled(it, state) }
+                }.onFailure { Log.w(TAG, "could not update AppFunctions system state", it) }
+            }
         }
     }
 
