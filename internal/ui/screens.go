@@ -93,7 +93,7 @@ func (s *session) groupCard(q *scope, nav *ryui.Navigator, group object) ryui.No
 			button("Test", func() { q.core("ccUrlTestOutbound", object{"tag": currentTag, "link": "", "timeoutMs": 10000}, nil) }, q.busy),
 			button("Details", func() { s.pushNode(nav, currentTag) }, q.busy)))
 	}
-	return ryui.Column(ryui.Style{Gap: 8, Padding: ryui.All(12), Background: ryui.Background, CornerRadius: 10}, nodes...)
+	return ryui.Column(ryui.Style{Gap: 8, Padding: ryui.All(12), Background: ryui.SecondaryBackground, CornerRadius: 10}, nodes...)
 }
 
 func (s *session) pushNode(nav *ryui.Navigator, tag string) {
