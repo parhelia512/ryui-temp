@@ -16,17 +16,18 @@ import (
 )
 
 type mapperInput struct {
-	root    map[string]any
-	query   map[string][]string
-	scheme  string
-	host    string
-	port    any
-	portRaw string
-	path    string
-	frag    string
-	user    string
-	base    map[string]any
-	form    string
+	root     map[string]any
+	query    map[string][]string
+	scheme   string
+	host     string
+	port     any
+	portRaw  string
+	path     string
+	frag     string
+	user     string
+	base     map[string]any
+	overlays map[string]map[string]any
+	form     string
 }
 
 type mapperState struct {
@@ -543,6 +544,7 @@ func decodeMapperUserinfo(user string, uri map[string]any) string {
 }
 
 func executeMapper(state *mapperState, protocol *registryProtocol, dialect string, mapper map[string]any) error {
+	applyMapperOverlays(state, mapper)
 	abstractDefaults := map[string]any{}
 	if defaults, ok := mapper["defaults"].(map[string]any); ok {
 		abstractDefaults = defaults
@@ -576,6 +578,21 @@ func executeMapper(state *mapperState, protocol *registryProtocol, dialect strin
 	for i := range plan {
 		if plan[i].key == "security" && plan[i].priority == 0 {
 			plan[i].priority = 10
+		}
+		record := plan[i].record
+		if record["materialize_default"] == true && record["default"] == nil && record["default_when"] == nil {
+			if _, hasSets := record["sets"]; hasSets {
+				continue
+			}
+			if field, ok := getPath(protocol.raw, "body.fields."+stringValue(record["maps_to"])); ok {
+				if field, ok := field.(map[string]any); ok {
+					if value, exists := field["default"]; exists {
+						record = cloneMap(record)
+						record["default"] = value
+						plan[i].record = record
+					}
+				}
+			}
 		}
 	}
 	sort.SliceStable(plan, func(i, j int) bool { return plan[i].priority < plan[j].priority })
@@ -788,6 +805,89 @@ func setMapperPath(root map[string]any, pathName string, value any) {
 		}
 		current = next
 	}
+}
+
+// applyMapperOverlays builds the extra.* source namespace declared by a mapper
+// section. A broken or absent overlay is ignored so the flat query/JSON fields
+// keep working; only records that explicitly name extra.* read from it.
+func applyMapperOverlays(state *mapperState, mapper map[string]any) {
+	overlays, ok := mapper["overlays"].([]any)
+	if !ok || len(overlays) == 0 {
+		return
+	}
+	if state.input.overlays == nil {
+		state.input.overlays = map[string]map[string]any{}
+	}
+	for _, raw := range overlays {
+		spec, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		name := stringValue(spec["name"])
+		if name == "" {
+			continue
+		}
+		decodes := stringSlice(spec["decode"])
+		var parsed map[string]any
+		for _, candidate := range sourceList(spec["source"]) {
+			value, found := sourceValueOne(candidate, state)
+			if !found || value == nil {
+				continue
+			}
+			switch typed := value.(type) {
+			case map[string]any:
+				parsed = typed
+			case string:
+				text := typed
+				for _, mode := range decodes {
+					if mode == "percent" {
+						text = percentDecode(text)
+					}
+				}
+				if err := decodeJSONInto([]byte(text), &parsed); err != nil {
+					parsed = nil
+				}
+			}
+			if parsed != nil {
+				break
+			}
+		}
+		if parsed == nil {
+			continue
+		}
+		for _, flat := range stringSlice(spec["flatten"]) {
+			if nested, ok := parsed[flat].(map[string]any); ok {
+				delete(parsed, flat)
+				for key, value := range nested {
+					parsed[key] = value
+				}
+			}
+		}
+		normalizeOverlayNumbers(parsed)
+		state.input.overlays[name] = parsed
+	}
+}
+
+// normalizeOverlayNumbers converts decoded JSON numbers to their canonical
+// decimal spelling so string-valued registry fields can read extra.* sources.
+func normalizeOverlayNumbers(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, item := range typed {
+			typed[key] = normalizeOverlayNumbers(item)
+		}
+	case []any:
+		for i, item := range typed {
+			typed[i] = normalizeOverlayNumbers(item)
+		}
+	case json.Number:
+		text := typed.String()
+		if parsed, err := strconv.ParseFloat(text, 64); err == nil && parsed == float64(int64(parsed)) {
+			return strconv.FormatInt(int64(parsed), 10)
+		}
+		return text
+	}
+	return value
 }
 
 func evaluateMapperRecord(state *mapperState, record map[string]any) {
@@ -1058,6 +1158,16 @@ func getSourcePath(pathName string, state mapperState) (any, bool) {
 		}
 		return nil, false
 	}
+	if strings.HasPrefix(pathName, "extra.") {
+		rest := strings.TrimPrefix(pathName, "extra.")
+		name, nested, found := strings.Cut(rest, ".")
+		overlay := state.input.overlays[name]
+		if !found {
+			value, exists := overlay[rest]
+			return value, exists && value != nil
+		}
+		return getPathFold(overlay, nested)
+	}
 	if strings.HasPrefix(pathName, "ini.") {
 		return getPathFold(state.input.root, strings.TrimPrefix(pathName, "ini."))
 	}
@@ -1136,7 +1246,7 @@ func decodeMapperExtra(value any, record map[string]any) any {
 		return value
 	}
 	mode := stringValue(extra["mode"])
-	if mode != "query" {
+	if mode != "query" && mode != "path" {
 		return value
 	}
 	passes := 1
@@ -1310,6 +1420,7 @@ func applyMapperExtract(state *mapperState, value any, extraction map[string]any
 			if pathName != "" {
 				setMapperPath(state.entry, pathName, valueToSet)
 			}
+			applyMapperImplies(state, typed["implies"])
 		}
 	}
 	return value, true
@@ -1540,6 +1651,16 @@ func deletePath(dst map[string]any, key string) {
 }
 
 func coerceMapperValue(v any, record map[string]any, reg *registry) (any, bool) {
+	if coerce, ok := record["coerce"].(map[string]any); ok {
+		if scalarToList, _ := coerce["scalar_to_list"].(bool); scalarToList {
+			switch v.(type) {
+			case []any:
+			case nil:
+			default:
+				v = []any{v}
+			}
+		}
+	}
 	if stringValue(record["type"]) == "object" {
 		if parsed, ok := v.(map[string]any); ok {
 			return parsed, true
@@ -1828,6 +1949,9 @@ func isBareNumber(value string) bool {
 }
 
 func isTrueSpelled(v any) bool {
+	if flag, ok := v.(bool); ok {
+		return flag
+	}
 	switch strings.ToLower(strings.TrimSpace(stringValue(v))) {
 	case "1", "true", "yes":
 		return true
@@ -2031,6 +2155,10 @@ func numberValue(v any) *float64 {
 		return &value
 	case float64:
 		return &typed
+	case json.Number:
+		if parsed, err := typed.Float64(); err == nil {
+			return &parsed
+		}
 	case string:
 		if parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64); err == nil {
 			return &parsed
@@ -2479,15 +2607,28 @@ func sanitizeMapperFields(state *mapperState, target map[string]any, fields map[
 			}
 		}
 		if conflicts, ok := field["conflicts"].([]any); ok {
+			conflicting := false
 			for _, item := range conflicts {
 				if rule, ok := item.(map[string]any); ok {
 					if other := stringValue(rule["with"]); other != "" {
-						if present, _ := getPath(state.entry, other); !isEmptyScalar(present) {
-							delete(target, name)
+						present, _ := getPath(state.entry, other)
+						unless := false
+						for _, path := range stringSlice(rule["unless_set"]) {
+							if v, exists := getPath(state.entry, path); exists && !isEmptyScalar(v) {
+								unless = true
+								break
+							}
+						}
+						if !isEmptyScalar(present) && !unless {
+							conflicting = true
 							break
 						}
 					}
 				}
+			}
+			if conflicting {
+				delete(target, name)
+				continue
 			}
 		}
 		if requires, ok := field["requires"].([]any); ok {
@@ -2497,21 +2638,25 @@ func sanitizeMapperFields(state *mapperState, target map[string]any, fields map[
 					if requiredPath := stringValue(rule["path"]); requiredPath != "" {
 						present, _ := getPath(state.entry, requiredPath)
 						equals := stringValue(rule["equals"])
-						if equals != "" && mapperSetKey(present) != equals {
-							missing = true
-						}
-						if equals == "" && isEmptyScalar(present) {
-							missing = true
+						if wantSet, ok := rule["set"].(bool); ok && wantSet && isEmptyScalar(present) {
+							setPath(state.entry, requiredPath, true)
+						} else {
+							if equals != "" && mapperSetKey(present) != equals {
+								missing = true
+							}
+							if equals == "" && isEmptyScalar(present) {
+								missing = true
+							}
 						}
 					}
 				}
 			}
 			if missing {
-				deletePath(state.entry, pathName)
+				delete(target, name)
 				continue
 			}
 		}
-		setPath(state.entry, pathName, value)
+		target[name] = value
 	}
 	return false
 }
@@ -2627,6 +2772,11 @@ func normalizeIntegral(v any) any {
 	case float64:
 		if typed == float64(int64(typed)) {
 			return int64(typed)
+		}
+		return typed
+	case json.Number:
+		if parsed, err := typed.Int64(); err == nil {
+			return parsed
 		}
 		return typed
 	case map[string]any:
