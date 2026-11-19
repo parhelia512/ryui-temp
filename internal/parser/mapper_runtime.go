@@ -898,7 +898,9 @@ func evaluateMapperRecord(state *mapperState, record map[string]any) {
 			defaultValue, hasDefault = sets[""]
 		}
 		if hasDefault {
-			if mapped, ok := coerceMapperValue(defaultValue, record, state.reg); ok {
+			if _, fromSets := record["sets"].(map[string]any); fromSets && record["default"] == nil && record["default_when"] == nil {
+				chosen, chosenSource, found = "", nil, true
+			} else if mapped, ok := coerceMapperValue(defaultValue, record, state.reg); ok {
 				chosen, chosenSource, found = mapped, nil, true
 			}
 		}
@@ -1188,11 +1190,18 @@ func extractMapperPairList(value any, record map[string]any, state *mapperState)
 		}
 		groups := extractFields(re, match)
 		key := groups[keyName]
+		if key == "" && keyName == "$key" {
+			key = groups["k"]
+		}
+		itemValue := groups[valueName]
+		if itemValue == "" && valueName == "$value" {
+			itemValue = groups["v"]
+		}
 		if key == "" {
 			invalidCount++
 			continue
 		}
-		result[key] = groups[valueName]
+		result[key] = itemValue
 	}
 	if invalidCount > 0 {
 		if onItemInvalid, ok := record["on_item_invalid"].(map[string]any); ok {
@@ -1267,6 +1276,9 @@ func applyMapperExtract(state *mapperState, value any, extraction map[string]any
 				setPath(state.entry, typed, groupValue)
 			}
 		case map[string]any:
+			if groupValue == "" {
+				continue
+			}
 			pathName := stringValue(typed["path"])
 			if prepend := stringValue(typed["prepend_group"]); prepend != "" {
 				groupValue = fields[prepend] + groupValue
