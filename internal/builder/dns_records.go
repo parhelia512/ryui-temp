@@ -356,7 +356,7 @@ func dnsRecordApplyRouteMirrors(dns map[string]any, settings map[string]any, sta
 				meta = map[string]any{"enabled": true, "serverTag": ref}
 			}
 		}
-		if meta == nil || meta["enabled"] != true {
+		if meta == nil {
 			continue
 		}
 		body, _ := record["body"].(map[string]any)
@@ -382,45 +382,50 @@ func dnsRecordApplyRouteMirrors(dns map[string]any, settings map[string]any, sta
 				v6 = append(v6, strings.TrimSpace(ip))
 			}
 		}
-		if len(v4) > 0 {
-			answers := []any{}
-			for _, ip := range v4 {
-				answers = append(answers, "*. 300 IN A "+ip)
+		if len(v4) > 0 || len(v6) > 0 {
+			if len(v4) > 0 {
+				answers := []any{}
+				for _, ip := range v4 {
+					answers = append(answers, "*. 300 IN A "+ip)
+				}
+				ruleA := cloneMap(match)
+				ruleA["query_type"] = []any{"A"}
+				ruleA["action"] = "predefined"
+				ruleA["rcode"] = "NOERROR"
+				ruleA["answer"] = answers
+				out = append(out, ruleA)
 			}
-			ruleA := cloneMap(match)
-			ruleA["query_type"] = []any{"A"}
-			ruleA["action"] = "predefined"
-			ruleA["rcode"] = "NOERROR"
-			ruleA["answer"] = answers
-			out = append(out, ruleA)
-		}
-		if len(v6) > 0 {
-			answers := []any{}
-			for _, ip := range v6 {
-				answers = append(answers, "*. 300 IN AAAA "+ip)
+			if len(v6) > 0 {
+				answers := []any{}
+				for _, ip := range v6 {
+					answers = append(answers, "*. 300 IN AAAA "+ip)
+				}
+				ruleAAAA := cloneMap(match)
+				ruleAAAA["query_type"] = []any{"AAAA"}
+				ruleAAAA["action"] = "predefined"
+				ruleAAAA["rcode"] = "NOERROR"
+				ruleAAAA["answer"] = answers
+				out = append(out, ruleAAAA)
 			}
-			ruleAAAA := cloneMap(match)
-			ruleAAAA["query_type"] = []any{"AAAA"}
-			ruleAAAA["action"] = "predefined"
-			ruleAAAA["rcode"] = "NOERROR"
-			ruleAAAA["answer"] = answers
-			out = append(out, ruleAAAA)
+			if len(v4) == 0 {
+				ruleA := cloneMap(match)
+				ruleA["query_type"] = []any{"A"}
+				ruleA["action"] = "predefined"
+				ruleA["rcode"] = "NOERROR"
+				out = append(out, ruleA)
+			}
+			if len(v6) == 0 {
+				ruleAAAA := cloneMap(match)
+				ruleAAAA["query_type"] = []any{"AAAA"}
+				ruleAAAA["action"] = "predefined"
+				ruleAAAA["rcode"] = "NOERROR"
+				out = append(out, ruleAAAA)
+			}
+			continue
 		}
-		if len(v4) == 0 {
-			ruleA := cloneMap(match)
-			ruleA["query_type"] = []any{"A"}
-			ruleA["action"] = "predefined"
-			ruleA["rcode"] = "NOERROR"
-			out = append(out, ruleA)
+		if meta["enabled"] != true {
+			continue
 		}
-		if len(v6) == 0 {
-			ruleAAAA := cloneMap(match)
-			ruleAAAA["query_type"] = []any{"AAAA"}
-			ruleAAAA["action"] = "predefined"
-			ruleAAAA["rcode"] = "NOERROR"
-			out = append(out, ruleAAAA)
-		}
-		continue
 		if meta["forceIpv4"] == true {
 			rule := cloneMap(match)
 			rule["ip_version"] = 6
