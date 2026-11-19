@@ -16,18 +16,19 @@ import (
 )
 
 type mapperInput struct {
-	root     map[string]any
-	query    map[string][]string
-	scheme   string
-	host     string
-	port     any
-	portRaw  string
-	path     string
-	frag     string
-	user     string
-	base     map[string]any
-	overlays map[string]map[string]any
-	form     string
+	root      map[string]any
+	query     map[string][]string
+	queryText map[string][]string
+	scheme    string
+	host      string
+	port      any
+	portRaw   string
+	path      string
+	frag      string
+	user      string
+	base      map[string]any
+	overlays  map[string]map[string]any
+	form      string
 }
 
 type mapperState struct {
@@ -84,7 +85,7 @@ func mapContractURI(rawURI string, protocol string, source Source, reg *registry
 		node, ds := mapWireGuardINI(stringValue(decoded), source, reg, parsed.frag, "", map[string]any{"uri": rawURI}, "uri")
 		return node, ds, true
 	}
-	in := mapperInput{root: map[string]any{}, query: queryFold(parsed.queryRaw), scheme: strings.ToLower(parsed.scheme), host: parsed.host, portRaw: parsed.portRaw, path: parsed.path, frag: parsed.frag, form: form}
+	in := mapperInput{root: map[string]any{}, query: queryFold(parsed.queryRaw, true), queryText: queryFold(parsed.queryRaw, false), scheme: strings.ToLower(parsed.scheme), host: parsed.host, portRaw: parsed.portRaw, path: parsed.path, frag: parsed.frag, form: form}
 	if form == "v2rayn" {
 		root, ok := decoded.(map[string]any)
 		if !ok {
@@ -983,6 +984,15 @@ func evaluateMapperRecord(state *mapperState, record map[string]any) {
 		if !ok {
 			continue
 		}
+		if strings.HasPrefix(candidate, "query.") {
+			extra := fieldMap(record, "decode_extra")
+			if extra["plus_literal"] != true && extra["mode"] != "path" && !strings.HasPrefix(stringValue(record["format"]), "base64") {
+				key := strings.ToLower(strings.TrimPrefix(candidate, "query."))
+				if values := state.input.queryText[key]; len(values) > 0 {
+					value = values[len(values)-1]
+				}
+			}
+		}
 		if isEmptyScalar(value) && record["default_from"] != nil {
 			continue // An empty name does not hide the next source or fallback.
 		}
@@ -1271,7 +1281,12 @@ func getPathFold(root map[string]any, pathName string) (any, bool) {
 	return current, true
 }
 
-func queryFold(raw string) map[string][]string {
+// Decode both views from the raw query so an escaped %2B stays distinct from '+'.
+func queryFold(raw string, plusLiteral bool) map[string][]string {
+	decode := url.QueryUnescape
+	if plusLiteral {
+		decode = url.PathUnescape
+	}
 	values := map[string][]string{}
 	for _, part := range strings.Split(raw, "&") {
 		if part == "" {
@@ -1285,7 +1300,7 @@ func queryFold(raw string) map[string][]string {
 		if err != nil {
 			k = key
 		}
-		v, err := url.PathUnescape(value)
+		v, err := decode(value)
 		if err != nil {
 			v = value
 		}
